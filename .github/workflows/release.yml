@@ -49,6 +49,10 @@ jobs:
   release:
     needs: verify
     runs-on: windows-latest
+    # The Azure federated credential trusts this repository's `release`
+    # environment specifically, so the OIDC subject only matches when the job
+    # declares it. Dropping this line breaks Trusted Signing authentication.
+    environment: release
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7

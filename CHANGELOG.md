@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.2.2 - 2026-08-09
+
+### Changed
+
+- Windows releases are now signed with Azure Trusted Signing under a publicly
+  trusted certificate, replacing the self-signed certificate used through
+  2.2.1. Windows no longer reports an unknown publisher.
+
 ## 2.2.1 - 2026-08-07
 
 ### Fixed

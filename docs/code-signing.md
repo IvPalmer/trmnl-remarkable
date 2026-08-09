@@ -4,7 +4,7 @@ Releases are Authenticode-signed. Which certificate signs them depends on what
 the repository has configured, and the release workflow picks the best available
 option automatically.
 
-## 1. Azure Trusted Signing (preferred)
+## 1. Azure Trusted Signing (in use since 2.2.2)
 
 A publicly trusted signature issued per-release by Microsoft. No private key
 ever exists on the runner or in this repository; the workflow authenticates to
@@ -22,9 +22,10 @@ The workflow enables this path only when the repository variable
 | Secret | `AZURE_CLIENT_ID` | App registration client ID |
 | Secret | `AZURE_SUBSCRIPTION_ID` | Subscription holding the signing account |
 
-The app registration needs a federated credential for this repository's tag
-pushes and the **Trusted Signing Certificate Profile Signer** role on the
-signing account.
+The app registration needs the **Artifact Signing Certificate Profile Signer**
+role on the signing account and a federated credential whose subject matches
+this repository's `release` environment. That is why the release job declares
+`environment: release`; removing it breaks authentication.
 
 Before any of that works, the Azure account itself needs a **completed identity
 validation** and a **certificate profile**. Identity validation is reviewed by
@@ -36,13 +37,14 @@ Set the `WINDOWS_SIGNING_CERT_BASE64` and `WINDOWS_SIGNING_CERT_PASSWORD`
 secrets to a base64 PFX and its password. The workflow writes the PFX to the
 runner's temporary directory, signs, and deletes it.
 
-## 3. Self-signed (current default)
+## 3. Self-signed (used through 2.2.1)
 
 With neither of the above configured, the release is signed with a certificate
 the workflow generates on the runner. The signature protects the executable
 against changes after signing, but the certificate is **not publicly trusted**.
 Windows may still show Unknown Publisher, SmartScreen, or an
-untrusted-certificate warning.
+untrusted-certificate warning. Releases up to and including 2.2.1 were signed
+this way; the notes below describe what those archives contain.
 
 The release archive includes:
 
