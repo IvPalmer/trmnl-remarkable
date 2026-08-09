@@ -8,7 +8,8 @@ the network drops, and sleeps in between.
 [![License: MIT](https://img.shields.io/badge/license-MIT-222222.svg)](LICENSE)
 
 <p align="center">
-  <img src="docs/images/remarkable-trmnl-demo.jpeg" alt="A TRMNL dashboard on a reMarkable Paper Pro" width="100%">
+  <img src="docs/images/remarkable-trmnl-weather.jpeg" alt="A TRMNL weather dashboard on a reMarkable Paper Pro" width="49%">
+  <img src="docs/images/remarkable-trmnl-mondrian.jpeg" alt="The Mondrian generative art plugin on a reMarkable Paper Pro" width="49%">
 </p>
 
 This is an unofficial community project. It is not affiliated with or supported
