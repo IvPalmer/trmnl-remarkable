@@ -64,7 +64,38 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           if ((Get-Content -Raw VERSION).Trim() -ne $version) { throw 'Tag and VERSION do not match' }
           ./scripts/build-release.ps1 -Version $version
+      # Azure Trusted Signing is the preferred path: it yields a publicly trusted
+      # signature with no private key anywhere in the repository or the runner.
+      # It stays dormant until AZURE_SIGNING_ACCOUNT is set as a repository
+      # variable, so the fallbacks below keep releases working until then.
+      - name: Sign in to Azure for Trusted Signing
+        if: vars.AZURE_SIGNING_ACCOUNT != ''
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Trusted-sign Windows installer
+        if: vars.AZURE_SIGNING_ACCOUNT != ''
+        uses: azure/trusted-signing-action@v0
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          files-folder: build/release
+          files-folder-filter: exe
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Package trusted-signed release
+        if: vars.AZURE_SIGNING_ACCOUNT != ''
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          ./scripts/finish-signed-release.ps1 -Version $version -RequireTrustedChain
       - name: Authenticode-sign Windows installer
+        if: vars.AZURE_SIGNING_ACCOUNT == ''
         shell: pwsh
         env:
           WINDOWS_SIGNING_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}

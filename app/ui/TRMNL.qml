@@ -606,6 +606,193 @@ Rectangle {
         }
     }
 
+    Rectangle {
+        id: brightnessSchedule
+        visible: root.brightnessScheduleVisible
+        anchors.fill: parent
+        z: 20
+        color: "#f4f2eb"
+        border.width: 3
+
+        Row {
+            id: scheduleHeader
+            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+            anchors.margins: 28
+            height: 72
+            Text {
+                text: "Weekly brightness schedule"
+                width: parent.width - 190; anchors.verticalCenter: parent.verticalCenter
+                font.pixelSize: 38; font.bold: true
+            }
+            Button {
+                text: "Back"; width: 180; height: 68; font.pixelSize: 23
+                onClicked: { root.showBrightnessSchedule(false); root.showControls(true) }
+            }
+        }
+
+        Text {
+            id: scheduleHelp
+            anchors.left: parent.left; anchors.right: parent.right; anchors.top: scheduleHeader.bottom
+            anchors.leftMargin: 28; anchors.rightMargin: 28
+            height: 52; verticalAlignment: Text.AlignVCenter
+            text: "Drag across half-hour cells, then use the brightness bar below. The week starts on Monday."
+            font.pixelSize: 21; wrapMode: Text.Wrap; color: "#333"
+        }
+
+        CheckBox {
+            id: scheduleEnabled
+            anchors.left: parent.left; anchors.top: scheduleHelp.bottom; anchors.leftMargin: 24
+            height: 62
+            text: "Use this weekly schedule (turns off system brightness)"
+            font.pixelSize: 23
+            enabled: root.appState.brightness !== undefined
+            onClicked: { root.scheduleDirty = true; scheduleRefreshDelay.restart() }
+        }
+
+        Row {
+            id: scheduleDayHeader
+            anchors.left: parent.left; anchors.right: parent.right; anchors.top: scheduleEnabled.bottom
+            anchors.leftMargin: 24; anchors.rightMargin: 24
+            height: 50
+            Item { width: 92; height: parent.height }
+            Repeater {
+                model: 7
+                Rectangle {
+                    id: scheduleDayCell
+                    required property int index
+                    width: (scheduleDayHeader.width - 92) / 7; height: scheduleDayHeader.height
+                    color: index % 2 ? "#e4e1d9" : "#ece9e1"
+                    border.width: 1; border.color: "#77736b"
+                    Text {
+                        anchors.centerIn: parent
+                        text: root.scheduleDayNames[scheduleDayCell.index]
+                        font.pixelSize: Math.max(15, Math.min(21, parent.width / 5.2)); font.bold: true
+                    }
+                }
+            }
+        }
+
+        Row {
+            id: scheduleBody
+            anchors.left: parent.left; anchors.right: parent.right
+            anchors.top: scheduleDayHeader.bottom; anchors.bottom: scheduleFooter.top
+            anchors.leftMargin: 24; anchors.rightMargin: 24; anchors.bottomMargin: 12
+
+            Column {
+                width: 92; height: parent.height
+                Repeater {
+                    model: 48
+                    Rectangle {
+                        id: scheduleTimeCell
+                        required property int index
+                        width: 92; height: scheduleBody.height / 48
+                        color: index % 2 ? "#e7e4dc" : "#efede6"
+                        border.width: 1; border.color: index % 2 ? "#c3beb3" : "#77736b"
+                        Text {
+                            anchors.right: parent.right; anchors.rightMargin: 8; anchors.verticalCenter: parent.verticalCenter
+                            text: scheduleTimeCell.index % 2 === 0 ? root.scheduleTime(scheduleTimeCell.index) : ""
+                            font.pixelSize: Math.max(11, Math.min(17, parent.height * 0.62)); color: "#333"
+                        }
+                    }
+                }
+            }
+
+            Item {
+                id: scheduleGridContainer
+                width: parent.width - 92; height: parent.height
+                Grid {
+                    id: scheduleGrid
+                    anchors.fill: parent
+                    columns: 7
+                    Repeater {
+                        model: 336
+                        Rectangle {
+                            id: scheduleCell
+                            required property int index
+                            property int day: index % 7
+                            property int slot: Math.floor(index / 7)
+                            property bool selected: root.scheduleCellSelected(day, slot)
+                            width: scheduleGrid.width / 7; height: scheduleGrid.height / 48
+                            color: selected ? "#171717" : root.scheduleSlotColor(root.scheduleSlots[index])
+                            border.width: selected ? 3 : (slot % 2 === 0 ? 2 : 1)
+                            border.color: selected ? "#000000" : (slot % 2 === 0 ? "#77736b" : "#b9b4a9")
+                        }
+                    }
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    preventStealing: true
+                    enabled: scheduleEnabled.checked
+                    onPressed: function(mouse) { root.beginScheduleSelection(mouse.x, mouse.y) }
+                    onPositionChanged: function(mouse) { if (pressed) root.extendScheduleSelection(mouse.x, mouse.y) }
+                    onReleased: {
+                        root.applyBrightnessToSelection(scheduleBrightness.value)
+                        scheduleRefreshDelay.restart()
+                    }
+                    onCanceled: scheduleRefreshDelay.restart()
+                }
+            }
+        }
+
+        Column {
+            id: scheduleFooter
+            anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+            anchors.leftMargin: 28; anchors.rightMargin: 28; anchors.bottomMargin: 24
+            height: 262; spacing: 6
+            Text {
+                width: parent.width; height: 38
+                text: root.scheduleSelectionSummary()
+                font.pixelSize: 25; font.bold: true; elide: Text.ElideRight
+            }
+            Text {
+                width: parent.width; height: 32
+                text: "White uses the default brightness; darker cells are lower and lighter gray cells are higher."
+                font.pixelSize: 18; color: "#444"
+            }
+            Row {
+                width: parent.width; height: 72; spacing: 18
+                Text {
+                    text: Math.round(scheduleBrightness.value) + "%"
+                    width: 92; anchors.verticalCenter: parent.verticalCenter
+                    font.pixelSize: 30; font.bold: true
+                }
+                Slider {
+                    id: scheduleBrightness
+                    width: parent.width - 110; height: parent.height
+                    from: 0; to: 100; stepSize: 1
+                    enabled: scheduleEnabled.checked && root.scheduleStartDay >= 0
+                    value: 50
+                    onMoved: root.applyBrightnessToSelection(value)
+                }
+            }
+            Row {
+                width: parent.width; height: 82; spacing: 14
+                Button {
+                    text: "Use default for selection"; width: Math.min(300, (parent.width - 28) * 0.36)
+                    height: parent.height; font.pixelSize: 20
+                    enabled: scheduleEnabled.checked && root.scheduleStartDay >= 0
+                    onClicked: root.clearBrightnessSelection()
+                }
+                Button {
+                    text: "Discard"; width: Math.min(190, (parent.width - 28) * 0.24)
+                    height: parent.height; font.pixelSize: 21
+                    onClicked: { root.showBrightnessSchedule(false); root.showControls(true) }
+                }
+                Button {
+                    text: root.scheduleDirty ? "Save schedule" : "Saved"
+                    width: parent.width - 28 - Math.min(300, (parent.width - 28) * 0.36) - Math.min(190, (parent.width - 28) * 0.24)
+                    height: parent.height; font.pixelSize: 22; font.bold: true
+                    enabled: root.scheduleDirty
+                    onClicked: {
+                        endpoint.sendMessage(17, JSON.stringify({enabled:scheduleEnabled.checked, slots:root.scheduleSlots}))
+                        root.showBrightnessSchedule(false)
+                        root.showControls(true)
+                    }
+                }
+            }
+        }
+    }
+
     Popup {
         id: diagnosticsPopup; modal: true; focus: true; x: root.width*0.08; y: root.height*0.08; width: root.width*0.84; height: root.height*0.84
         onClosed: root.cleanScreen()

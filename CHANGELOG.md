@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.2.1 - 2026-08-07
+
+### Fixed
+
+- Completed the full-screen weekly brightness grid opened by the Controls
+  button, including drag selection, the exact day/time summary, the bottom
+  brightness slider, default-cell clearing, and save/discard actions.
+- Normalized the backend message constants with Go formatting.
+
+### Changed
+
+- The release workflow now signs with Azure Trusted Signing when the repository
+  is configured for it, falling back to a purchased certificate and then to the
+  self-signed certificate it has always used. See `docs/code-signing.md`.
+
+### Validation
+
+- Passed Go formatting, tests, and vet checks
+- Passed QML linting
+- Completed the ARM64 build, resource compilation, and bundle validation
+
 ## 2.2.0 - 2026-08-07
 
 ### Added

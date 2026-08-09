@@ -41,30 +41,30 @@ import (
 var version = "dev"
 
 const (
-	msgInitialize        uint32 = 1
-	msgSaveConfig        uint32 = 2
-	msgTestConnection    uint32 = 3
-	msgRefreshCurrent    uint32 = 4
-	msgNext              uint32 = 5
-	msgSetBrightness     uint32 = 6
-	msgClearCache        uint32 = 7
-	msgDiagnostics       uint32 = 8
-	msgResume            uint32 = 10
-	msgResetSettings     uint32 = 11
-	msgPrevious          uint32 = 12
-	msgUpdatePreferences uint32 = 13
-	msgBatteryStart      uint32 = 14
-	msgBatteryStop       uint32 = 15
-	msgBatteryReset      uint32 = 16
+	msgInitialize             uint32 = 1
+	msgSaveConfig             uint32 = 2
+	msgTestConnection         uint32 = 3
+	msgRefreshCurrent         uint32 = 4
+	msgNext                   uint32 = 5
+	msgSetBrightness          uint32 = 6
+	msgClearCache             uint32 = 7
+	msgDiagnostics            uint32 = 8
+	msgResume                 uint32 = 10
+	msgResetSettings          uint32 = 11
+	msgPrevious               uint32 = 12
+	msgUpdatePreferences      uint32 = 13
+	msgBatteryStart           uint32 = 14
+	msgBatteryStop            uint32 = 15
+	msgBatteryReset           uint32 = 16
 	msgSaveBrightnessSchedule uint32 = 17
-	msgState             uint32 = 101
-	msgImage             uint32 = 102
-	msgStatus            uint32 = 103
-	msgError             uint32 = 104
-	msgHistory           uint32 = 105
-	msgTestResult        uint32 = 106
-	msgDiagnosticsResult uint32 = 107
-	msgBatteryTest       uint32 = 108
+	msgState                  uint32 = 101
+	msgImage                  uint32 = 102
+	msgStatus                 uint32 = 103
+	msgError                  uint32 = 104
+	msgHistory                uint32 = 105
+	msgTestResult             uint32 = 106
+	msgDiagnosticsResult      uint32 = 107
+	msgBatteryTest            uint32 = 108
 )
 
 type historyEntry struct {
