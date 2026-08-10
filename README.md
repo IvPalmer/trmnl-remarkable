@@ -12,8 +12,8 @@ the network drops, and sleeps in between.
   <img src="docs/images/remarkable-trmnl-mondrian.jpeg" alt="The Mondrian generative art plugin on a reMarkable Paper Pro" width="49%">
 </p>
 
-This is an unofficial community project. It is not affiliated with or supported
-by TRMNL or reMarkable, and a firmware update can break it.
+This is a community project. It is not affiliated with or supported by
+reMarkable, and a reMarkable firmware update can break it.
 
 > [!CAUTION]
 > **Enabling Developer Mode factory-resets the Paper Pro.** Sync or export
@@ -24,18 +24,57 @@ by TRMNL or reMarkable, and a firmware update can break it.
 > [Developer Mode notes](https://support.remarkable.com/s/article/Developer-mode)
 > before you start.
 
+## Supported models
+ 
+I own a Paper Pro and nothing else, so that is the only device this has been
+tested on. Rather than guess, the installer checks the model, architecture, and
+firmware, and stops if they don't match.
+ 
+**Tablet**
+ 
+| Device | Status |
+|---|---|
+| reMarkable Paper Pro (`Ferrari`, ARM64) | **Supported.** Developed and tested on this device |
+| reMarkable 2 | **Untested.** The installer will refuse to run. Testers wanted |
+| reMarkable 1 | **Untested.** The installer will refuse to run. Testers wanted |
+| Any other reMarkable model | Not supported |
+ 
+**reMarkable OS**
+ 
+| Version | Status |
+|---|---|
+| 3.26.x, 3.27.x | Supported |
+| Anything older or newer | The installer refuses to run until the version is validated |
+ 
+**Computer running the installer**
+ 
+| Platform | Status |
+|---|---|
+| Windows 10 / 11, x64 | Supported |
+| macOS | Not yet. Planned, and the most requested gap — [contributions welcome](.github/CONTRIBUTING.md) |
+| Linux | Not yet |
+ 
+**Have an rM1 or rM2 and want to help?** Run the installer and let it fail, then
+open an issue with exactly what it reported — it prints the model and firmware
+it detected. That tells us whether the model check is simply too strict or the
+hardware difference is real. Don't force it past the check; that is how tablets
+get bricked.
+ 
+If you are on a device or firmware this doesn't cover, TRMNL documents a
+[KOReader-based approach](https://help.trmnl.com/en/articles/16206611-trmnl-remarkable)
+that works more broadly.
+ 
+Full details: [compatibility](docs/compatibility.md).
+ 
 ## What you need
-
+ 
 | | |
 |---|---|
 | Tablet | reMarkable Paper Pro (`Ferrari`, ARM64) on reMarkable OS 3.26.x or 3.27.x |
 | Computer | Windows 10 or 11, x64, for the installer |
 | Connection | USB cable (Wi-Fi also works) |
 | TRMNL account | A claimed BYOD device and its Device API key, or your own BYOS server over HTTPS |
-
-The installer refuses to run on other models, architectures, and firmware
-versions rather than guessing. See [compatibility](docs/compatibility.md).
-
+ 
 ## Install
 
 1. On the tablet: enable Developer Mode, complete the reset, and note the SSH
@@ -70,12 +109,17 @@ identity instead. Plain HTTP is only accepted for a loopback mock on the tablet.
 
 ### 1. Obtain and claim a BYOD license
 
-The hosted TRMNL service requires one BYOD license for a third-party device.
-
-[Buy TRMNL BYOD](https://shop.trmnl.com/products/byod)
-
-This is a direct, non-affiliate product link. The project receives no
-commission.
+The hosted TRMNL service requires one BYOD license per third-party device.
+ 
+**[Buy TRMNL, BYOD $10 off with `paperpro10`](https://trmnl.com/?ref=paperpro10)**
+ 
+The link applies the discount automatically. If you would rather enter it
+yourself, the code is `paperpro10` at checkout.
+ 
+> **Disclosure:** that is a referral link, set up with TRMNL. It takes $10 off
+> your license and pays this project a referral amount. The installer and the app
+> are free and MIT licensed regardless, and a fully self-hosted BYOS server needs
+> no license at all — see the custom server option below.
 
 After purchase, sign in to TRMNL and use the order number to claim or add the
 BYOD device. TRMNL's help center explains the claim and Friendly ID flow:
@@ -147,7 +191,7 @@ a TRMNL API request.
 Battery life comes down to how often the tablet wakes, how much it uses Wi-Fi,
 and the front light. A static e-ink image costs nothing to keep on screen.
 
-Recommended: leave reMarkable's **Auto-sleep** and **Light sleep** on, turn
+Recommended: leave reMarkable's **Auto-sleep** and **Light sleep** off, turn
 **Auto power-off** off, keep TRMNL's **Wake for refresh** on, and use the
 longest refresh interval you can live with.
 
