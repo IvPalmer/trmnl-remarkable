@@ -51,11 +51,11 @@ firmware, and stops if they don't match.
 | Platform | Status |
 |---|---|
 | Windows 10 / 11, x64 | Supported |
-| macOS | Not yet. Planned, and the most requested gap — [contributions welcome](.github/CONTRIBUTING.md) |
+| macOS | Not yet. Planned, and the most requested gap [contributions welcome](.github/CONTRIBUTING.md) |
 | Linux | Not yet |
  
 **Have an rM1 or rM2 and want to help?** Run the installer and let it fail, then
-open an issue with exactly what it reported — it prints the model and firmware
+open an issue with exactly what it reported. It prints the model and firmware
 it detected. That tells us whether the model check is simply too strict or the
 hardware difference is real. Don't force it past the check; that is how tablets
 get bricked.
@@ -119,7 +119,7 @@ yourself, the code is `paperpro10` at checkout.
 > **Disclosure:** that is a referral link, set up with TRMNL. It takes $10 off
 > your license and pays this project a referral amount. The installer and the app
 > are free and MIT licensed regardless, and a fully self-hosted BYOS server needs
-> no license at all — see the custom server option below.
+> no license at all, see the custom server option below.
 
 After purchase, sign in to TRMNL and use the order number to claim or add the
 BYOD device. TRMNL's help center explains the claim and Friendly ID flow:
