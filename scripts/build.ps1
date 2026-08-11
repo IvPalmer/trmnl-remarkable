@@ -51,7 +51,9 @@ try {
             & $go build -buildvcs=false -trimpath -ldflags "-s -w -X main.version=$Version" -o (Join-Path $appOut 'backend\entry') ./backend/cmd/trmnl-remarkable
             if ($LASTEXITCODE -ne 0) { throw "Backend build failed for $($bundle.Payload)" }
         }
-        $env:GOARCH=$oldGOARCH; $env:GOARM=$oldGOARM; $env:GOOS=$oldGOOS
+        # The on-device test utilities are Linux-only sources, so they stay on
+        # the Paper Pro target rather than following the host.
+        $env:GOARCH = 'arm64'; $env:GOARM = ''
         & $go build -buildvcs=false -trimpath -ldflags '-s -w' -o (Join-Path $dist 'trmnl-mock') ./backend/cmd/trmnl-mock
         if ($LASTEXITCODE -ne 0) { throw 'Mock build failed' }
         & $go build -buildvcs=false -trimpath -ldflags '-s -w' -o (Join-Path $dist 'trmnl-input') ./backend/cmd/trmnl-input
