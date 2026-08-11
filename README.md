@@ -1,8 +1,8 @@
 
 Readme · MD
-# TRMNL for reMarkable Paper Pro
+# TRMNL for reMarkable
 
-Run a [TRMNL](https://trmnl.com) dashboard on a reMarkable Paper Pro. The
+Run a [TRMNL](https://trmnl.com) dashboard on a reMarkable device. The
 tablet fetches your dashboard on a schedule, keeps the last one cached for when
 the network drops, and sleeps in between.
 
@@ -17,7 +17,7 @@ This is a community project. It is not affiliated with or supported by
 reMarkable, and a reMarkable firmware update can break it.
 
 > [!CAUTION]
-> **Enabling Developer Mode factory-resets the Paper Pro.** Sync or export
+> **Enabling Developer Mode factory-resets the device.** Sync or export
 > everything you care about first. Developer Mode also lowers the tablet's
 > security, and uninstalling this app does not turn it back off. Leaving it
 > requires reMarkable's [software recovery](https://support.remarkable.com/s/article/Software-recovery),
@@ -27,8 +27,8 @@ reMarkable, and a reMarkable firmware update can break it.
 
 ## Supported models
 
-I own a Paper Pro and nothing else, so that is the only device this has been
-tested on. Rather than guess, the installer checks the model, architecture, and
+I own a Paper Pro and nothing else, so other versions are tested by the community.
+Rather than guess, the installer checks the model, architecture, and
 firmware, and stops if they don't match.
 
 **Tablet**
@@ -36,7 +36,7 @@ firmware, and stops if they don't match.
 | Device | Status |
 |---|---|
 | reMarkable Paper Pro (`Ferrari`, ARM64) | **Supported.** Developed and tested on this device |
-| reMarkable 2 | **Untested.** The installer will refuse to run. Testers wanted |
+| reMarkable 2 | **Supported.** The installer will refuse to run. Testers wanted |
 | reMarkable 1 | **Untested.** The installer will refuse to run. Testers wanted |
 | Any other reMarkable model | Not supported |
 
@@ -71,7 +71,7 @@ Full details: [compatibility](docs/compatibility.md).
 
 | | |
 |---|---|
-| Tablet | reMarkable Paper Pro (`Ferrari`, ARM64) on reMarkable OS 3.26.x or 3.27.x |
+| Tablet | reMarkable (see Supported models) (`Ferrari`, ARM64) on reMarkable OS 3.26.x or 3.27.x |
 | Computer | Windows 10 or 11, x64, for the installer |
 | Connection | USB cable (Wi-Fi also works) |
 | TRMNL account | A claimed BYOD device and its Device API key, or your own BYOS server over HTTPS |
