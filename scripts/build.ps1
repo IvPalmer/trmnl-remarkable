@@ -31,15 +31,27 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'QML lint failed' }
 
     $dist = Join-Path $root 'dist'
-    $appOut = Join-Path $dist 'trmnl-remarkable-app'
-    if (Test-Path -LiteralPath $appOut) { Remove-Item -Recurse -LiteralPath $appOut }
-    New-Item -ItemType Directory -Path (Join-Path $appOut 'backend'),(Join-Path $appOut 'scripts') -Force | Out-Null
+    # The Paper Pro is 64-bit ARM; the reMarkable 1 and 2 are 32-bit. Each gets
+    # its own AppLoad bundle, and the installer uploads whichever matches the
+    # tablet it finds. The unsuffixed directory stays the aarch64 bundle so the
+    # device scripts and older tooling keep working unchanged.
+    $bundles = @(
+        @{ Payload = 'aarch64'; GoArch = 'arm64'; GoArm = ''; Directory = 'trmnl-remarkable-app' },
+        @{ Payload = 'arm32'; GoArch = 'arm'; GoArm = '7'; Directory = 'trmnl-remarkable-app-arm32' }
+    )
 
-    $oldGOOS=$env:GOOS; $oldGOARCH=$env:GOARCH; $oldCGO=$env:CGO_ENABLED
+    $oldGOOS=$env:GOOS; $oldGOARCH=$env:GOARCH; $oldGOARM=$env:GOARM; $oldCGO=$env:CGO_ENABLED
     try {
-        $env:GOOS = 'linux'; $env:GOARCH = 'arm64'; $env:CGO_ENABLED = '0'
-        & $go build -buildvcs=false -trimpath -ldflags "-s -w -X main.version=$Version" -o (Join-Path $appOut 'backend\entry') ./backend/cmd/trmnl-remarkable
-        if ($LASTEXITCODE -ne 0) { throw 'Backend build failed' }
+        $env:GOOS = 'linux'; $env:CGO_ENABLED = '0'
+        foreach ($bundle in $bundles) {
+            $appOut = Join-Path $dist $bundle.Directory
+            if (Test-Path -LiteralPath $appOut) { Remove-Item -Recurse -LiteralPath $appOut }
+            New-Item -ItemType Directory -Path (Join-Path $appOut 'backend'),(Join-Path $appOut 'scripts') -Force | Out-Null
+            $env:GOARCH = $bundle.GoArch; $env:GOARM = $bundle.GoArm
+            & $go build -buildvcs=false -trimpath -ldflags "-s -w -X main.version=$Version" -o (Join-Path $appOut 'backend\entry') ./backend/cmd/trmnl-remarkable
+            if ($LASTEXITCODE -ne 0) { throw "Backend build failed for $($bundle.Payload)" }
+        }
+        $env:GOARCH=$oldGOARCH; $env:GOARM=$oldGOARM; $env:GOOS=$oldGOOS
         & $go build -buildvcs=false -trimpath -ldflags '-s -w' -o (Join-Path $dist 'trmnl-mock') ./backend/cmd/trmnl-mock
         if ($LASTEXITCODE -ne 0) { throw 'Mock build failed' }
         & $go build -buildvcs=false -trimpath -ldflags '-s -w' -o (Join-Path $dist 'trmnl-input') ./backend/cmd/trmnl-input
@@ -47,20 +59,23 @@ try {
         & $go build -buildvcs=false -trimpath -ldflags '-s -w' -o (Join-Path $dist 'trmnl-screenshot') ./backend/cmd/trmnl-screenshot
         if ($LASTEXITCODE -ne 0) { throw 'Screenshot test utility build failed' }
     } finally {
-        $env:GOOS=$oldGOOS; $env:GOARCH=$oldGOARCH; $env:CGO_ENABLED=$oldCGO
+        $env:GOOS=$oldGOOS; $env:GOARCH=$oldGOARCH; $env:GOARM=$oldGOARM; $env:CGO_ENABLED=$oldCGO
     }
 
-    Copy-Item -LiteralPath (Join-Path $root 'app\manifest.json'),(Join-Path $root 'app\icon.png') -Destination $appOut -Force
-    Copy-Item -LiteralPath (Join-Path $root 'app\scripts\brightness_guard.sh') -Destination (Join-Path $appOut 'scripts') -Force
-    Push-Location (Join-Path $root 'app')
-    try {
-        & $rcc --binary -o (Join-Path $appOut 'resources.rcc') 'application.qrc'
-        if ($LASTEXITCODE -ne 0) { throw 'rcc failed' }
-    } finally { Pop-Location }
+    foreach ($bundle in $bundles) {
+        $appOut = Join-Path $dist $bundle.Directory
+        Copy-Item -LiteralPath (Join-Path $root 'app\manifest.json'),(Join-Path $root 'app\icon.png') -Destination $appOut -Force
+        Copy-Item -LiteralPath (Join-Path $root 'app\scripts\brightness_guard.sh') -Destination (Join-Path $appOut 'scripts') -Force
+        Push-Location (Join-Path $root 'app')
+        try {
+            & $rcc --binary -o (Join-Path $appOut 'resources.rcc') 'application.qrc'
+            if ($LASTEXITCODE -ne 0) { throw 'rcc failed' }
+        } finally { Pop-Location }
 
-    foreach ($required in @('manifest.json','icon.png','resources.rcc','backend\entry','scripts\brightness_guard.sh')) {
-        $requiredPath = Join-Path $appOut $required
-        if (-not (Test-Path -LiteralPath $requiredPath) -or (Get-Item -LiteralPath $requiredPath).Length -eq 0) { throw "Bundle is missing $required" }
+        foreach ($required in @('manifest.json','icon.png','resources.rcc','backend\entry','scripts\brightness_guard.sh')) {
+            $requiredPath = Join-Path $appOut $required
+            if (-not (Test-Path -LiteralPath $requiredPath) -or (Get-Item -LiteralPath $requiredPath).Length -eq 0) { throw "$($bundle.Payload) bundle is missing $required" }
+        }
+        Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $appOut 'backend\entry'),(Join-Path $appOut 'resources.rcc') | Format-Table -AutoSize
     }
-    Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $appOut 'backend\entry'),(Join-Path $appOut 'resources.rcc') | Format-Table -AutoSize
 } finally { Pop-Location }

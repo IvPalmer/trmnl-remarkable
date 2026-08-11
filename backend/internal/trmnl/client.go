@@ -54,6 +54,10 @@ type DisplayResponse struct {
 type Client struct {
 	HTTP    *http.Client
 	Version string
+	// Model is sent as the "model" header so a BYOS server can tell the
+	// tablets apart. It defaults to the Paper Pro, which is what every
+	// installation reported before the reMarkable 1 and 2 were supported.
+	Model   string
 	Battery func() string
 	RSSI    func() string
 }
@@ -134,7 +138,11 @@ func (c *Client) get(ctx context.Context, cfg config.Config, path string) (Displ
 		req.Header.Set("ID", cfg.DeviceID)
 	}
 	req.Header.Set("User-Agent", "trmnl-remarkable/"+c.Version)
-	req.Header.Set("model", "reMarkable Paper Pro")
+	model := c.Model
+	if model == "" {
+		model = "reMarkable Paper Pro"
+	}
+	req.Header.Set("model", model)
 	req.Header.Set("firmware-version", c.Version)
 	if c.Battery != nil {
 		if v := c.Battery(); v != "" {

@@ -27,8 +27,8 @@ reMarkable, and a reMarkable firmware update can break it.
 
 ## Supported models
 
-I own a Paper Pro and nothing else, so other versions are tested by the community.
-Rather than guess, the installer checks the model, architecture, and
+I own a Paper Pro and nothing else, so the other models are tested by the
+community. Rather than guess, the installer checks the model, architecture, and
 firmware, and stops if they don't match.
 
 **Tablet**
@@ -36,16 +36,20 @@ firmware, and stops if they don't match.
 | Device | Status |
 |---|---|
 | reMarkable Paper Pro (`Ferrari`, ARM64) | **Supported.** Developed and tested on this device |
-| reMarkable 2 | **Supported.** The installer will refuse to run. Testers wanted |
-| reMarkable 1 | **Untested.** The installer will refuse to run. Testers wanted |
+| reMarkable 2 (ARM32) | **Supported since 2.3.0.** Installs, but not yet confirmed on hardware. Testers wanted |
+| reMarkable 1 (ARM32) | **Supported since 2.3.0.** Installs, but not yet confirmed on hardware. Testers wanted |
 | Any other reMarkable model | Not supported |
+
+The release carries a complete build for each architecture. The installer
+identifies the tablet first and sends only the half that matches it.
 
 **reMarkable OS**
 
-| Version | Status |
-|---|---|
-| 3.26.x, 3.27.x | Supported |
-| Anything older or newer | The installer refuses to run until the version is validated |
+| Device | Version | Status |
+|---|---|---|
+| Paper Pro, reMarkable 2 | 3.26.x, 3.27.x | Supported |
+| reMarkable 1 | 3.20.x to 3.27.x | Supported; reMarkable no longer ships releases for this device |
+| Any device | Anything older or newer | The installer refuses to run until the version is validated |
 
 **Computer running the installer**
 
@@ -55,11 +59,11 @@ firmware, and stops if they don't match.
 | macOS | Not yet. Planned, and the most requested gap [contributions welcome](.github/CONTRIBUTING.md) |
 | Linux | Not yet |
 
-**Have an rM1 or rM2 and want to help?** Run the installer and let it fail, then
-open an issue with exactly what it reported. It prints the model and firmware
-it detected. That tells us whether the model check is simply too strict or the
-hardware difference is real. Don't force it past the check; that is how tablets
-get bricked.
+**Running it on an rM1 or rM2?** Nothing after the installer's own checks has
+been confirmed on that hardware yet. Back the tablet up first, and open an issue
+with what you see either way; the installer and **Diagnostics** both print the
+model and firmware they detected. Don't force anything past a check that
+refuses; that is how tablets get bricked.
 
 If you are on a device or firmware this doesn't cover, TRMNL documents a
 [KOReader-based approach](https://help.trmnl.com/en/articles/16206611-trmnl-remarkable)
@@ -71,7 +75,7 @@ Full details: [compatibility](docs/compatibility.md).
 
 | | |
 |---|---|
-| Tablet | reMarkable (see Supported models) (`Ferrari`, ARM64) on reMarkable OS 3.26.x or 3.27.x |
+| Tablet | reMarkable Paper Pro, reMarkable 2, or reMarkable 1, on a supported firmware (see Supported models) |
 | Computer | Windows 10 or 11, x64, for the installer |
 | Connection | USB cable (Wi-Fi also works) |
 | TRMNL account | A claimed BYOD device and its Device API key, or your own BYOS server over HTTPS |
@@ -82,7 +86,7 @@ Full details: [compatibility](docs/compatibility.md).
    password it shows you. Charge above 20% and connect the USB cable.
 2. Download the release ZIP and `SHA256SUMS.txt`, then check the hash matches:
 ```powershell
-   Get-FileHash .\TRMNL-for-reMarkable-2.2.2-Windows-x64.zip -Algorithm SHA256
+   Get-FileHash .\TRMNL-for-reMarkable-2.3.0-Windows-x64.zip -Algorithm SHA256
 ```
 
 3. Extract the whole ZIP. Run **TRMNL Installer.exe** with the `payload` folder
@@ -127,14 +131,22 @@ BYOD device. TRMNL's help center explains the claim and Friendly ID flow:
 
 ### 2. Configure the device model
 
-In the TRMNL device settings, choose or create the closest custom model with:
+In the TRMNL device settings, choose or create the closest custom model. The
+tablet's panel decides the values:
 
-- Resolution: **1620 x 2160**
-- Orientation: **portrait**
-- Color capability: **full color / 16.7M** when the model editor offers it
-- Image format: **PNG**
+| Tablet | Resolution | Color capability |
+|---|---|---|
+| Paper Pro | **1620 x 2160** | **full color / 16.7M** when the model editor offers it |
+| reMarkable 2 and 1 | **1404 x 1872** | **grayscale**; the panel shows 16 greys |
+
+Orientation is **portrait** and the image format is **PNG** on every model.
+
 Use fit mode in the tablet app if a plugin sends a different aspect ratio. The
 Paper Pro can display color, but a plugin or template must also render color.
+On the reMarkable 1 and 2, turn on **Smooth gradients** in Settings if a colour
+dashboard arrives flat; it converts to the panel's greys by diffusing the error
+rather than dropping it. The app reports the panel it detected in Settings and
+in Diagnostics.
 
 ### 3. Get the correct Device API key
 
@@ -174,8 +186,8 @@ instead of repeatedly requesting.
 |---|---|
 | Controls and Settings | Tap the upper-right corner |
 | Refresh, next screen, previous screen | Buttons in the controls panel |
-| Front light | Slider, or follow the system brightness |
-| Weekly front-light schedule | **Brightness schedule** in the controls panel; drag over Monday-first half-hour cells |
+| Front light (Paper Pro only) | Slider, or follow the system brightness |
+| Weekly front-light schedule (Paper Pro only) | **Brightness schedule** in the controls panel; drag over Monday-first half-hour cells |
 | Refresh history | **History** in the controls panel |
 | Diagnostics | **Diagnostics** (secrets are redacted) |
 | Back to reMarkable | AppLoad's downward swipe from centre-top, the on-screen button, or hold the upper-left corner for two seconds |
@@ -186,7 +198,8 @@ a TRMNL API request.
 ## Battery
 
 Battery life comes down to how often the tablet wakes, how much it uses Wi-Fi,
-and the front light. A static e-ink image costs nothing to keep on screen.
+and the front light where there is one. A static e-ink image costs nothing to
+keep on screen.
 
 Recommended: leave reMarkable's **Auto-sleep** and **Light sleep** on, turn
 **Auto power-off** off, keep TRMNL's **Wake for refresh** on, and use the
@@ -198,9 +211,10 @@ Three settings help further:
   6 hours) once the battery is low and the charger is unplugged.
 - **Pause scheduled refreshes overnight** stops wakeups inside a window you set.
   The dashboard stays on screen; manual refresh still works.
-- **Smooth gradients for the colour panel** dithers images before display, which
-  removes the banding that dashboards drawn for bright screens produce. Text and
-  flat colour are left alone.
+- **Smooth gradients** dithers images before display, which removes the banding
+  that dashboards drawn for bright screens produce. It targets the panel that is
+  present: the Paper Pro's colours, or the 16 greys of the reMarkable 1 and 2.
+  Text and flat colour are left alone.
 For a real measurement, charge to full, unplug, start the battery test in
 Settings, and let it discharge at least 10%. Plugging in invalidates the
 estimate rather than skewing it quietly.
@@ -230,7 +244,8 @@ never touches your notebooks, documents, or boot partitions. See
 | SSH key changed | Don't click past it. Reconnect over USB and confirm it is your tablet before accepting |
 | HTTP 401 or 403 | Use the Device API Key from a claimed BYOD device, not a `user_...` token |
 | HTTP 429 | Wait; the app honours `Retry-After` |
-| Dashboard is monochrome | Check the plugin renders colour; the tablet can't add colour that isn't in the image |
+| Dashboard is monochrome | On a Paper Pro, check the plugin renders colour; the tablet can't add colour that isn't in the image. The reMarkable 1 and 2 have no colour panel |
+| Colour dashboard looks flat on an rM1 or rM2 | Turn on **Smooth gradients** in Settings so colours are diffused into the panel's greys |
 | Gone after reboot | Use **Reactivate after reboot**. Returning to stock on reboot is deliberate |
 | Battery drains fast | Longer refresh interval, lower front light, and the battery settings above |
 
@@ -271,18 +286,19 @@ and ShellCheck.
 
 ```powershell
 ./scripts/build.ps1
-./scripts/build-release.ps1 -Version 2.2.2
+./scripts/build-release.ps1 -Version 2.3.0
 ```
 
-`build.ps1` runs formatting, tests, `go vet`, the ARM64 cross-build, QML
-resource compilation, and bundle validation. `build-release.ps1` also verifies
-the pinned runtime hashes, builds the installer, and writes the release ZIP,
-SBOM, and checksums under `release/`.
+`build.ps1` runs formatting, tests, `go vet`, both device cross-builds (ARM64
+for the Paper Pro and ARMv7 for the reMarkable 1 and 2), QML resource
+compilation, and bundle validation. `build-release.ps1` also verifies the
+pinned runtime hashes for both architectures, builds the installer, and writes
+the release ZIP, SBOM, and checksums under `release/`.
 
 Layout:
 
 - `app/ui/TRMNL.qml`: the AppLoad frontend
-- `backend/cmd/trmnl-remarkable`: the ARM64 backend (Device API, scheduling, rendering)
+- `backend/cmd/trmnl-remarkable`: the device backend (Device API, scheduling, rendering), built for ARM64 and ARMv7
 - `installer/`: the localhost Windows installer
 - `device/install.sh`, `device/uninstall.sh`, `device/recover-stock.sh`: on-device operations
 ## Contributing and licence

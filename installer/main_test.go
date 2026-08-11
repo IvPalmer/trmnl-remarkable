@@ -20,6 +20,66 @@ func TestParseKeyValues(t *testing.T) {
 	}
 }
 
+func TestIdentifyDevice(t *testing.T) {
+	for _, tc := range []struct {
+		values map[string]string
+		name   string
+		arch   string
+		known  bool
+	}{
+		{map[string]string{"machine": "reMarkable Ferrari", "model": "reMarkable Ferrari"}, "reMarkable Paper Pro", "aarch64", true},
+		{map[string]string{"machine": "reMarkable 2.0", "model": "reMarkable 2.0"}, "reMarkable 2", "arm32", true},
+		{map[string]string{"machine": "reMarkable Prototype 1"}, "reMarkable 1", "arm32", true},
+		// A kernel without a SoC device leaves only the device-tree model.
+		{map[string]string{"machine": "", "model": "reMarkable 2.0"}, "reMarkable 2", "arm32", true},
+		{map[string]string{"machine": "reMarkable Chiappa"}, "", "", false},
+	} {
+		device, ok := identifyDevice(tc.values)
+		if ok != tc.known {
+			t.Fatalf("identifyDevice(%v) known = %t", tc.values, ok)
+		}
+		if ok && (device.Name != tc.name || device.PayloadArch != tc.arch) {
+			t.Fatalf("identifyDevice(%v) = %+v", tc.values, device)
+		}
+	}
+}
+
+func TestFirmwareWindowsPerDevice(t *testing.T) {
+	paperPro := supportedDevices["reMarkable Ferrari"]
+	if len(paperPro.Firmware) != 2 {
+		t.Fatalf("the Paper Pro window changed unexpectedly: %v", paperPro.Firmware)
+	}
+	// The reMarkable 1 stopped receiving releases, so it must accept the older
+	// line it shipped with; the tablets still being updated must not.
+	rm1 := supportedDevices["reMarkable 1.0"]
+	if !strings.Contains(strings.Join(rm1.Firmware, " "), "3.20.") {
+		t.Fatalf("the reMarkable 1 window excludes its last firmware: %v", rm1.Firmware)
+	}
+	for _, prefix := range supportedDevices["reMarkable 2.0"].Firmware {
+		if prefix == "3.20." {
+			t.Fatal("the reMarkable 2 window should track the validated firmware only")
+		}
+	}
+}
+
+func TestPayloadFileApplies(t *testing.T) {
+	shared := []string{"install-device-runtime.sh", "licenses/XOVI-LICENSE", "manifest.json"}
+	for _, name := range shared {
+		if !payloadFileApplies(name, "arm32") || !payloadFileApplies(name, "aarch64") {
+			t.Fatalf("%s should be uploaded to every device", name)
+		}
+	}
+	if !payloadFileApplies("appload/qtfb-shim-32bit-arm32.so", "arm32") {
+		t.Fatal("the 32-bit shim of the arm32 payload must be uploaded to a reMarkable 2")
+	}
+	if payloadFileApplies("appload/qtfb-shim-32bit-aarch64.so", "arm32") {
+		t.Fatal("aarch64 files must not be uploaded to a 32-bit tablet")
+	}
+	if payloadFileApplies("trmnl-remarkable-device-arm32.tar.gz", "aarch64") {
+		t.Fatal("arm32 files must not be uploaded to a Paper Pro")
+	}
+}
+
 func TestVerifyPayload(t *testing.T) {
 	dir := t.TempDir()
 	data := []byte("safe payload")

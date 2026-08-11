@@ -1,5 +1,43 @@
 # Changelog
 
+## 2.3.0 - 2026-08-11
+
+### Added
+
+- **reMarkable 1 and reMarkable 2 support.** Both are 32-bit ARM, so the
+  release now carries a second complete build: an armv7 backend, the arm32
+  XOVI runtime, and the arm32 AppLoad extension and qtfb shims. The installer
+  identifies the tablet and uploads only the half of the payload that matches
+  it, so the transfer stays the size it was.
+- The backend detects the panel it is running on from
+  `/sys/devices/soc0/machine`, falling back to the device-tree model, and
+  reports it to the app and to diagnostics. The reMarkable 1 reports two
+  different machine names depending on production batch; both are recognised.
+- Dithering now targets the panel that is present. On the reMarkable 1 and 2
+  that is the 16-level grey ramp, which converts a colour dashboard to grey by
+  diffusing the error instead of flattening it.
+
+### Changed
+
+- The front-light controls, the weekly brightness schedule, and the
+  restore-brightness setting are hidden on the reMarkable 1 and 2, which have no
+  front light, rather than shown permanently disabled. The Settings page names
+  the detected panel and its resolution.
+- The `model` header sent to TRMNL and BYOS servers now reports the tablet the
+  app is actually running on instead of always claiming a Paper Pro.
+- The installer, the device installer, and the runtime installer share one
+  device table. Firmware windows are per device: 3.26.x and 3.27.x for the
+  Paper Pro and reMarkable 2, and 3.20.x through 3.27.x for the reMarkable 1,
+  which no longer receives releases.
+- `device/test-on-device.sh` skips the front-light check on devices without one.
+
+### Validation
+
+- Passed Go formatting, tests, and vet checks
+- Completed both device cross-builds (arm64 and armv7)
+- Not exercised on reMarkable 1 or reMarkable 2 hardware; see
+  `docs/validation/v2.3.md`
+
 ## 2.2.2 - 2026-08-09
 
 ### Changed

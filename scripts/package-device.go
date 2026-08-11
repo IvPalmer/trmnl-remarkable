@@ -15,7 +15,6 @@ import (
 )
 
 var include = []string{
-	"dist/trmnl-remarkable-app",
 	"device/install.sh",
 	"device/uninstall.sh",
 	"device/recover-stock.sh",
@@ -41,13 +40,19 @@ var archiveNames = map[string]string{
 }
 
 func main() {
-	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: go run scripts/package-device.go ROOT OUTPUT.tar.gz [EXTRA_PATH...]")
+	if len(os.Args) < 4 {
+		fmt.Fprintln(os.Stderr, "usage: go run scripts/package-device.go ROOT OUTPUT.tar.gz APP_BUNDLE_DIR [EXTRA_PATH...]")
 		os.Exit(2)
 	}
+	// One archive is produced per architecture. The bundle directory differs
+	// between them, but it is always unpacked to the same place on the tablet,
+	// so the archive name stays dist/trmnl-remarkable-app.
+	bundle := filepath.ToSlash(os.Args[3])
+	include = append(include, bundle)
+	archiveNames[bundle] = "dist/trmnl-remarkable-app"
 	// Version-specific documents (the validation record) are passed in so the
 	// include list does not have to be edited for every release.
-	include = append(include, os.Args[3:]...)
+	include = append(include, os.Args[4:]...)
 	root, err := filepath.Abs(os.Args[1])
 	check(err)
 	output, err := filepath.Abs(os.Args[2])
@@ -85,6 +90,8 @@ func main() {
 		name := filepath.ToSlash(rel)
 		if archiveName, ok := archiveNames[name]; ok {
 			name = archiveName
+		} else if strings.HasPrefix(name, bundle+"/") {
+			name = "dist/trmnl-remarkable-app/" + strings.TrimPrefix(name, bundle+"/")
 		}
 		mode := int64(0o644)
 		if info.IsDir() {

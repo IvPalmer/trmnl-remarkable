@@ -38,12 +38,14 @@ jobs:
           qmllint -W 0 -I tests/qml-stubs app/ui/TRMNL.qml
           "$QT_ROOT_DIR/libexec/rcc" --binary -o /tmp/resources.rcc app/application.qrc
           test -s /tmp/resources.rcc
-      - name: ARM64 build
+      # Paper Pro and the reMarkable 1/2 respectively.
+      - name: Device builds
         env:
           GOOS: linux
-          GOARCH: arm64
           CGO_ENABLED: "0"
-        run: go build -buildvcs=false -trimpath -ldflags="-s -w -X main.version=$(cat VERSION)" -o /tmp/trmnl-remarkable ./backend/cmd/trmnl-remarkable
+        run: |
+          GOARCH=arm64 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.version=$(cat VERSION)" -o /tmp/trmnl-remarkable-aarch64 ./backend/cmd/trmnl-remarkable
+          GOARCH=arm GOARM=7 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.version=$(cat VERSION)" -o /tmp/trmnl-remarkable-arm32 ./backend/cmd/trmnl-remarkable
       - name: AppLoad protocol integration
         run: |
           CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags='-s -w -X main.version=integration' -o /tmp/trmnl-backend ./backend/cmd/trmnl-remarkable

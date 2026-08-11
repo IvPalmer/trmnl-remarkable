@@ -27,6 +27,11 @@ Rectangle {
     property bool brightnessScheduleVisible: false
     property bool apiKeyConfigured: false
     property bool initialized: false
+    // The reMarkable 1 and 2 have no front light, so those controls are hidden
+    // rather than shown permanently disabled. The backend reports the panel it
+    // detected; until it does, assume the hardware it was developed on.
+    property bool hasFrontlight: root.appState.device === undefined || root.appState.device.frontlight !== false
+    property bool colourPanel: root.appState.device === undefined || root.appState.device.color !== false
     property int cleaningPhase: 0
     property var scheduleSlots: []
     property var scheduleDayNames: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -409,15 +414,16 @@ Rectangle {
                              ? "Battery saver is active. Refreshes are less frequent until you charge the tablet."
                              : "Quiet hours are active. Scheduled refreshes resume when the window ends.")
                 }
-                Text { text: "Brightness  " + Math.round(brightness.value) + "%"; font.pixelSize: 28; font.bold: true }
+                Text { visible: root.hasFrontlight; text: "Brightness  " + Math.round(brightness.value) + "%"; font.pixelSize: 28; font.bold: true }
                 Slider {
-                    id: brightness; width: parent.width; height: 78; from: 0; to: 100; stepSize: 1
+                    id: brightness; visible: root.hasFrontlight; width: parent.width; height: 78; from: 0; to: 100; stepSize: 1
                     enabled: root.appState.brightness !== undefined && !useSystemBrightness.checked
                     onMoved: { settingsBrightness.value = value; brightnessDebounce.restart() }
                 }
                 Timer { id: brightnessDebounce; interval: 250; onTriggered: endpoint.sendMessage(6, JSON.stringify({percent:Math.round(brightness.value)})) }
-                CheckBox { id: useSystemBrightness; text: "Use system brightness"; font.pixelSize: 24; onClicked: { settingsUseSystemBrightness.checked = checked; endpoint.sendMessage(13, JSON.stringify({use_system_brightness:checked})) } }
+                CheckBox { id: useSystemBrightness; visible: root.hasFrontlight; text: "Use system brightness"; font.pixelSize: 24; onClicked: { settingsUseSystemBrightness.checked = checked; endpoint.sendMessage(13, JSON.stringify({use_system_brightness:checked})) } }
                 Button {
+                    visible: root.hasFrontlight
                     text: root.appState.brightness_schedule_active
                           ? "Brightness schedule  ·  now " + root.appState.scheduled_brightness_percent + "%"
                           : "Brightness schedule"
@@ -471,23 +477,30 @@ Rectangle {
                 Row { spacing: 18; width: parent.width; Text { text: "Minimum refresh seconds"; width: 330; font.pixelSize: 22; anchors.verticalCenter: parent.verticalCenter } TextField { id: minRefresh; width: 200; height: 64; inputMethodHints: Qt.ImhDigitsOnly; font.pixelSize: 22 } }
                 Row { spacing: 18; Text { text: "Image fit"; width: 180; font.pixelSize: 22; anchors.verticalCenter: parent.verticalCenter } ComboBox { id: fitMode; width: 240; height: 64; model: ["Fit", "Fill", "Stretch"]; font.pixelSize: 22 } Text { text: "Orientation"; width: 180; font.pixelSize: 22; anchors.verticalCenter: parent.verticalCenter } ComboBox { id: orientation; width: 240; height: 64; model: ["Auto", "Portrait", "Landscape"]; font.pixelSize: 22 } }
                 CheckBox { id: invertMode; text: "Dark / invert image"; font.pixelSize: 22 }
-                Text { text: "Front light  " + Math.round(settingsBrightness.value) + "%"; font.pixelSize: 24; font.bold: true }
+                Text {
+                    width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 19; color: "#444"
+                    visible: root.appState.device !== undefined
+                    text: "Detected panel: " + (root.appState.device ? root.appState.device.name + "  ·  " + root.appState.device.width + " × " + root.appState.device.height + "  ·  " + (root.colourPanel ? "colour" : "greyscale") : "")
+                }
+                Text { visible: root.hasFrontlight; text: "Front light  " + Math.round(settingsBrightness.value) + "%"; font.pixelSize: 24; font.bold: true }
                 Slider {
-                    id: settingsBrightness; width: parent.width; height: 76; from: 0; to: 100; stepSize: 1
+                    id: settingsBrightness; visible: root.hasFrontlight; width: parent.width; height: 76; from: 0; to: 100; stepSize: 1
                     enabled: root.appState.brightness !== undefined && !settingsUseSystemBrightness.checked
                     onMoved: { brightness.value = value; settingsBrightnessDebounce.restart() }
                 }
                 Timer { id: settingsBrightnessDebounce; interval: 250; onTriggered: endpoint.sendMessage(6, JSON.stringify({percent:Math.round(settingsBrightness.value)})) }
                 CheckBox {
-                    id: settingsUseSystemBrightness; text: "Use the reMarkable system front-light level"; font.pixelSize: 22
+                    id: settingsUseSystemBrightness; visible: root.hasFrontlight; text: "Use the reMarkable system front-light level"; font.pixelSize: 22
                     onClicked: { useSystemBrightness.checked = checked; endpoint.sendMessage(13, JSON.stringify({use_system_brightness:checked})) }
                 }
-                CheckBox { id: ditherMode; text: "Smooth gradients for the colour panel"; font.pixelSize: 22 }
+                CheckBox { id: ditherMode; text: root.colourPanel ? "Smooth gradients for the colour panel" : "Smooth gradients for the greyscale panel"; font.pixelSize: 22 }
                 Text {
                     width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 19; color: "#444"
-                    text: "Dashboards are drawn for bright screens, so gradients arrive as visible bands. This spreads the error across neighbouring pixels instead. Text and flat colour are left alone."
+                    text: root.colourPanel
+                          ? "Dashboards are drawn for bright screens, so gradients arrive as visible bands. This spreads the error across neighbouring pixels instead. Text and flat colour are left alone."
+                          : "Dashboards are drawn for bright colour screens. This converts them to the panel's 16 greys by spreading the error across neighbouring pixels, which keeps coloured areas apart instead of flattening them. A dashboard already drawn in those greys is left untouched."
                 }
-                CheckBox { id: restoreBrightness; text: "Restore previous brightness when exiting"; font.pixelSize: 22 }
+                CheckBox { id: restoreBrightness; visible: root.hasFrontlight; text: "Restore previous brightness when exiting"; font.pixelSize: 22 }
                 CheckBox { id: startCached; text: "Start with cached screen when offline"; font.pixelSize: 22 }
                 CheckBox { id: wakeForRefresh; text: "Sleep between updates and wake for refresh"; font.pixelSize: 22 }
                 CheckBox { id: batterySaver; text: "Refresh less often below 20% battery"; font.pixelSize: 22 }

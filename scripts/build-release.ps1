@@ -27,17 +27,27 @@ $payload = Join-Path $packageRoot 'payload'
 if (Test-Path -LiteralPath $work) { Remove-Item -Recurse -LiteralPath $work }
 New-Item -ItemType Directory -Path (Join-Path $payload 'appload'),(Join-Path $payload 'licenses') -Force | Out-Null
 
-$deviceArchive = Join-Path $payload 'trmnl-remarkable-device.tar.gz'
-& $go run (Join-Path $PSScriptRoot 'package-device.go') $root $deviceArchive $validationName
-if ($LASTEXITCODE -ne 0) { throw 'Device package creation failed' }
-$deviceHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $deviceArchive).Hash.ToLowerInvariant()
-Set-Content -NoNewline -Encoding ascii -LiteralPath (Join-Path $payload 'trmnl-remarkable-device.sha256') -Value $deviceHash
-
+# One device archive and one runtime set per architecture. The installer probes
+# the tablet and uploads only the half that matches it.
 $downloads = Join-Path $root '_downloads'
-Copy-Item -LiteralPath (Join-Path $downloads 'xovi-aarch64.tar.gz') -Destination $payload
-Copy-Item -LiteralPath (Join-Path $downloads 'appload-release\appload.so') -Destination (Join-Path $payload 'appload')
-Copy-Item -LiteralPath (Join-Path $downloads 'appload-release\shims\qtfb-shim.so') -Destination (Join-Path $payload 'appload')
-Copy-Item -LiteralPath (Join-Path $downloads 'appload-release\shims\qtfb-shim-32bit.so') -Destination (Join-Path $payload 'appload')
+$architectures = @(
+    @{ Payload = 'aarch64'; Bundle = 'dist/trmnl-remarkable-app'; AppLoad = 'appload-release' },
+    @{ Payload = 'arm32'; Bundle = 'dist/trmnl-remarkable-app-arm32'; AppLoad = 'appload-release-arm32' }
+)
+foreach ($architecture in $architectures) {
+    $name = $architecture.Payload
+    $deviceArchive = Join-Path $payload "trmnl-remarkable-device-$name.tar.gz"
+    & $go run (Join-Path $PSScriptRoot 'package-device.go') $root $deviceArchive $architecture.Bundle $validationName
+    if ($LASTEXITCODE -ne 0) { throw "Device package creation failed for $name" }
+    $deviceHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $deviceArchive).Hash.ToLowerInvariant()
+    Set-Content -NoNewline -Encoding ascii -LiteralPath (Join-Path $payload "trmnl-remarkable-device-$name.sha256") -Value $deviceHash
+
+    Copy-Item -LiteralPath (Join-Path $downloads "xovi-$name.tar.gz") -Destination $payload
+    $appLoadSource = Join-Path $downloads $architecture.AppLoad
+    Copy-Item -LiteralPath (Join-Path $appLoadSource 'appload.so') -Destination (Join-Path $payload "appload\appload-$name.so")
+    Copy-Item -LiteralPath (Join-Path $appLoadSource 'shims\qtfb-shim.so') -Destination (Join-Path $payload "appload\qtfb-shim-$name.so")
+    Copy-Item -LiteralPath (Join-Path $appLoadSource 'shims\qtfb-shim-32bit.so') -Destination (Join-Path $payload "appload\qtfb-shim-32bit-$name.so")
+}
 Copy-Item -LiteralPath (Join-Path $downloads 'licenses\XOVI-LICENSE') -Destination (Join-Path $payload 'licenses')
 Copy-Item -LiteralPath (Join-Path $downloads 'licenses\APPLOAD-LICENSE') -Destination (Join-Path $payload 'licenses')
 Copy-Item -LiteralPath (Join-Path $downloads 'licenses\EXTENSIONS-LICENSE') -Destination (Join-Path $payload 'licenses')

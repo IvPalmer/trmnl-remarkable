@@ -186,9 +186,9 @@ func (s *server) preflight(w http.ResponseWriter, r *http.Request) {
 		message = "Device found, and its SSH key matches the one recorded last time."
 	}
 	if !compatible {
-		message = "This installer supports only reMarkable Paper Pro firmware 3.26 or 3.27. Nothing was changed."
+		message = "This installer supports the reMarkable Paper Pro and reMarkable 2 on firmware 3.26 or 3.27, and the reMarkable 1 on 3.20 to 3.27. Nothing was changed."
 	}
-	writeJSON(w, http.StatusOK, response{OK: true, Message: message, Fingerprint: fingerprint, Model: values["model"], OSVersion: values["os"], Compatible: compatible, Installed: values["installed"] == "yes", Active: values["active"] == "yes", KnownHost: seenBefore && !changed, Changed: changed})
+	writeJSON(w, http.StatusOK, response{OK: true, Message: message, Fingerprint: fingerprint, Model: deviceLabel(values), OSVersion: values["os"], Compatible: compatible, Installed: values["installed"] == "yes", Active: values["active"] == "yes", KnownHost: seenBefore && !changed, Changed: changed})
 }
 
 // install streams newline-delimited JSON progress events. An install uploads
@@ -236,10 +236,12 @@ func (s *server) install(w http.ResponseWriter, r *http.Request) {
 	defer client.Close()
 
 	stage("Checking the model and firmware")
-	if _, compatible, inspectErr := inspectDevice(client); inspectErr != nil || !compatible {
+	values, compatible, inspectErr := inspectDevice(client)
+	if inspectErr != nil || !compatible {
 		fail("The model or firmware is not supported. Nothing was changed.")
 		return
 	}
+	target, _ := identifyDevice(values)
 
 	stage("Preparing the staging directory")
 	if _, err := run(client, "rm -rf /tmp/trmnl-install && mkdir -p /tmp/trmnl-install/appload /tmp/trmnl-install/licenses"); err != nil {
@@ -247,8 +249,14 @@ func (s *server) install(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The payload holds a build for each architecture. Uploading both would
+	// double a transfer the tablet already takes minutes over, so only the
+	// files for the detected device are sent.
 	names := make([]string, 0, len(manifest.Files))
 	for name := range manifest.Files {
+		if !payloadFileApplies(name, target.PayloadArch) {
+			continue
+		}
 		names = append(names, name)
 	}
 	sort.Strings(names)
@@ -533,6 +541,22 @@ func verifyPayload(dir string) (payloadManifest, error) {
 	return manifest, nil
 }
 
+// payloadFileApplies reports whether a payload entry belongs to the target
+// architecture. Files without an architecture marker in their name (the device
+// script, the licences, the manifest) always apply.
+func payloadFileApplies(name, arch string) bool {
+	if arch == "" {
+		return true
+	}
+	switch {
+	case strings.Contains(name, "-aarch64"):
+		return arch == "aarch64"
+	case strings.Contains(name, "-arm32"):
+		return arch == "arm32"
+	}
+	return true
+}
+
 func parseKeyValues(s string) map[string]string {
 	out := make(map[string]string)
 	for _, line := range strings.Split(strings.ReplaceAll(s, "\r", ""), "\n") {
@@ -544,17 +568,72 @@ func parseKeyValues(s string) map[string]string {
 	return out
 }
 
+// supportedDevice describes one reMarkable this release can install onto. The
+// payload carries a build for each architecture, and payloadArch selects which
+// half of it is uploaded.
+type supportedDevice struct {
+	Name        string
+	PayloadArch string
+	Arch        string
+	Firmware    []string
+}
+
+// The reMarkable 1 reports two machine names depending on production batch, and
+// it no longer receives releases, so its firmware window reaches back to the
+// last line it shipped rather than ending with the current one.
+var supportedDevices = map[string]supportedDevice{
+	"reMarkable Ferrari":     {Name: "reMarkable Paper Pro", PayloadArch: "aarch64", Arch: "aarch64", Firmware: []string{"3.26.", "3.27."}},
+	"reMarkable 2.0":         {Name: "reMarkable 2", PayloadArch: "arm32", Arch: "armv7l", Firmware: []string{"3.26.", "3.27."}},
+	"reMarkable 1.0":         {Name: "reMarkable 1", PayloadArch: "arm32", Arch: "armv7l", Firmware: []string{"3.20.", "3.21.", "3.22.", "3.23.", "3.24.", "3.25.", "3.26.", "3.27."}},
+	"reMarkable Prototype 1": {Name: "reMarkable 1", PayloadArch: "arm32", Arch: "armv7l", Firmware: []string{"3.20.", "3.21.", "3.22.", "3.23.", "3.24.", "3.25.", "3.26.", "3.27."}},
+}
+
+// identifyDevice matches a probe against the supported table. The machine name
+// is authoritative; the device-tree model is the fallback for a kernel that
+// does not register a SoC device.
+func identifyDevice(values map[string]string) (supportedDevice, bool) {
+	for _, key := range []string{values["machine"], values["model"]} {
+		if device, ok := supportedDevices[strings.TrimSpace(key)]; ok {
+			return device, true
+		}
+	}
+	return supportedDevice{}, false
+}
+
+// deviceLabel is what the page shows. A recognised tablet gets its product
+// name; anything else is reported exactly as the tablet described itself so an
+// unsupported device can be identified from a bug report.
+func deviceLabel(values map[string]string) string {
+	if device, ok := identifyDevice(values); ok {
+		return device.Name
+	}
+	for _, key := range []string{values["model"], values["machine"]} {
+		if trimmed := strings.TrimSpace(key); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 func inspectDevice(client *ssh.Client) (map[string]string, bool, error) {
 	out, err := runWithin(client, inspectCommand, inspectTimeout)
 	if err != nil {
 		return nil, false, err
 	}
 	values := parseKeyValues(out)
-	compatible := values["model"] == "reMarkable Ferrari" && values["arch"] == "aarch64" && (strings.HasPrefix(values["os"], "3.26.") || strings.HasPrefix(values["os"], "3.27."))
-	return values, compatible, nil
+	device, known := identifyDevice(values)
+	if !known || values["arch"] != device.Arch {
+		return values, false, nil
+	}
+	for _, prefix := range device.Firmware {
+		if strings.HasPrefix(values["os"], prefix) {
+			return values, true, nil
+		}
+	}
+	return values, false, nil
 }
 
-const inspectCommand = `printf 'model='; tr -d '\000' </proc/device-tree/model 2>/dev/null || true; printf '\nos='; sed -n 's/^IMG_VERSION="\{0,1\}\([^" ]*\)"\{0,1\}$/\1/p' /etc/os-release | head -n1; printf '\narch='; uname -m; printf '\ninstalled='; test -f /home/root/xovi/exthome/appload/trmnl-remarkable/manifest.json && echo yes || echo no; printf 'active='; pid=$(pidof xochitl | awk '{print $1}'); if [ -n "$pid" ] && tr '\000' '\n' <"/proc/$pid/environ" 2>/dev/null | grep -q '^LD_PRELOAD=/home/root/xovi/xovi.so$'; then echo yes; else echo no; fi`
+const inspectCommand = `printf 'model='; tr -d '\000' </proc/device-tree/model 2>/dev/null || true; printf '\nmachine='; cat /sys/devices/soc0/machine 2>/dev/null || true; printf '\nos='; sed -n 's/^IMG_VERSION="\{0,1\}\([^" ]*\)"\{0,1\}$/\1/p' /etc/os-release | head -n1; printf '\narch='; uname -m; printf '\ninstalled='; test -f /home/root/xovi/exthome/appload/trmnl-remarkable/manifest.json && echo yes || echo no; printf 'active='; pid=$(pidof xochitl | awk '{print $1}'); if [ -n "$pid" ] && tr '\000' '\n' <"/proc/$pid/environ" 2>/dev/null | grep -q '^LD_PRELOAD=/home/root/xovi/xovi.so$'; then echo yes; else echo no; fi`
 
 func writeJSON(w http.ResponseWriter, status int, v response) {
 	w.Header().Set("Content-Type", "application/json")

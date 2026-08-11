@@ -8,8 +8,12 @@
 - [ ] Run `scripts/build-release.ps1` from a clean clone twice; confirm identical
       ZIP SHA-256 values.
 - [ ] Confirm CI test and CodeQL jobs pass on the exact release commit: gofmt,
-      race tests, vet, ShellCheck, Python compile, QML lint/resources, ARM64
-      build, AppLoad protocol integration, `govulncheck`, and CodeQL.
+      race tests, vet, ShellCheck, Python compile, QML lint/resources, both
+      device builds (ARM64 and ARMv7), AppLoad protocol integration,
+      `govulncheck`, and CodeQL.
+- [ ] Confirm the payload carries both architectures: `xovi-aarch64.tar.gz` and
+      `xovi-arm32.tar.gz`, the matching AppLoad extension and shims, and a
+      device archive plus checksum per architecture.
 - [ ] Inspect the staged tree and ZIP for credentials/private keys and review the
       CycloneDX SBOM plus third-party notices.
 - [ ] Inspect `TRMNL Installer.exe` VersionInfo, icon/manifest, requested execution
@@ -23,13 +27,16 @@
 
 ## Exact-release physical gates
 
-- [ ] Back up/sync the test Paper Pro before Developer Mode or destructive tests.
-- [ ] Confirm the supported firmware range against physical Paper Pro hardware.
-- [ ] Install the **exact final ZIP payload** on a clean supported tablet.
+- [ ] Back up/sync the test tablet before Developer Mode or destructive tests.
+- [ ] Confirm the supported firmware range against physical hardware, per model.
+- [ ] Install the **exact final ZIP payload** on a clean supported tablet. Where
+      a reMarkable 1 or 2 is available, repeat the run there; the arm32 path is
+      otherwise unexercised.
 - [ ] Test AppLoad launch, real Device API authentication/current/next, hosted
       plugin image, conditional refresh, rate limit behavior, and offline cache.
-- [ ] Test color, fit/orientation, overlays/e-ink cleanup without extra API calls,
-      frontlight restore on normal/crash exit, battery test, RTC scheduling,
+- [ ] Test color or greyscale dithering, fit/orientation, overlays/e-ink cleanup
+      without extra API calls, frontlight restore on normal/crash exit where the
+      device has one, battery test, RTC scheduling,
       suspend/resume, Wi-Fi loss, and repeated launch/exit cycles.
 - [ ] Test reboot-to-stock, **Reactivate after reboot**, stock restore, reinstall,
       uninstall-preserve, uninstall-and-erase, and official recovery guidance.

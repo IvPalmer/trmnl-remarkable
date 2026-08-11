@@ -31,6 +31,7 @@ import (
 	"trmnl-remarkable/backend/internal/brightness"
 	"trmnl-remarkable/backend/internal/cache"
 	"trmnl-remarkable/backend/internal/config"
+	"trmnl-remarkable/backend/internal/device"
 	"trmnl-remarkable/backend/internal/dither"
 	"trmnl-remarkable/backend/internal/power"
 	"trmnl-remarkable/backend/internal/protocol"
@@ -87,6 +88,7 @@ type app struct {
 	conn                             *protocol.Connection
 	client                           *trmnl.Client
 	cache                            cache.Store
+	panel                            device.Profile
 	light                            *brightness.Device
 	wake                             *power.RTC
 	history                          []historyEntry
@@ -150,7 +152,10 @@ func main() {
 	defer conn.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &app{cfg: cfg, configPath: configPath, dataDir: dataDir, historyPath: filepath.Join(dataDir, "history.json"), batteryPath: filepath.Join(dataDir, "battery-test.json"), conn: conn, client: trmnl.New(), cache: cache.Store{Dir: filepath.Join(home, ".cache", "trmnl-remarkable")}, triggers: make(chan trigger, 4), brightnessScheduleChanged: make(chan struct{}, 1), ctx: ctx, cancel: cancel}
+	a.panel = device.Detect()
+	log.Printf("panel: %s (%dx%d, colour=%t, front light=%t)", a.panel.Name, a.panel.Width, a.panel.Height, a.panel.Color, a.panel.Frontlight)
 	a.client.Version = version
+	a.client.Model = a.panel.Name
 	a.client.Battery = readBatteryVoltage
 	a.client.RSSI = readRSSI
 	a.updates = update.New()
@@ -645,7 +650,7 @@ func (a *app) sendState() {
 	latest := a.updateResult
 	a.mu.RUnlock()
 	saving, percent := a.batterySaving(full)
-	state := map[string]any{"config": cfg, "api_key_configured": hasKey, "version": version, "battery_percent": percent, "wake_for_refresh_available": a.wake != nil, "battery_saving": saving, "quiet_hours_active": full.InQuietHours(time.Now())}
+	state := map[string]any{"config": cfg, "api_key_configured": hasKey, "version": version, "device": a.panel, "battery_percent": percent, "wake_for_refresh_available": a.wake != nil, "battery_saving": saving, "quiet_hours_active": full.InQuietHours(time.Now())}
 	if scheduled, ok := full.ScheduledBrightness(time.Now()); ok && !full.UseSystemBrightness {
 		state["brightness_schedule_active"] = true
 		state["scheduled_brightness_percent"] = scheduled
@@ -937,7 +942,7 @@ func (a *app) diagnostics() string {
 	a.mu.RLock()
 	cfg := config.Redacted(a.cfg)
 	a.mu.RUnlock()
-	m := map[string]any{"version": version, "config": cfg, "cache_dir": a.cache.Dir, "data_dir": a.dataDir, "battery_percent": readBatteryPercent(), "display": readTrimmed("/sys/class/graphics/fb0/virtual_size"), "os": readTrimmed("/etc/os-release")}
+	m := map[string]any{"version": version, "config": cfg, "device": a.panel, "cache_dir": a.cache.Dir, "data_dir": a.dataDir, "battery_percent": readBatteryPercent(), "display": readTrimmed("/sys/class/graphics/fb0/virtual_size"), "os": readTrimmed("/etc/os-release")}
 	a.batteryMu.Lock()
 	m["battery_test"] = a.batteryTest.Snapshot(time.Now().UTC(), readBatteryStatus())
 	a.batteryMu.Unlock()
@@ -963,7 +968,7 @@ func (a *app) renderedView(source string, cfg config.Config) (string, error) {
 	var src image.Image = decoded
 	suffix := ""
 	if cfg.Dither == "auto" {
-		palette, paletteErr := dither.NewPalette(cfg.Palette(), config.ParseHexColor)
+		palette, paletteErr := dither.NewPalette(cfg.PaletteOr(a.panel.Palette()), config.ParseHexColor)
 		if paletteErr != nil {
 			log.Printf("dither palette unusable: %v", paletteErr)
 		} else if dither.Needed(src, palette) {

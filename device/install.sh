@@ -10,12 +10,24 @@ STAGED="$APP_ROOT/.trmnl-remarkable.new.$$"
 
 model=$(tr -d '\000' </proc/device-tree/model 2>/dev/null || true)
 machine=$(cat /sys/devices/soc0/machine 2>/dev/null || true)
-case "$model|$machine" in
-  "reMarkable Ferrari|reMarkable Ferrari"|*"Paper Pro"*) ;;
-  *) echo "Refusing installation: connected device is not identified as a reMarkable Paper Pro ($model $machine)" >&2; exit 20 ;;
+# The SoC machine name is authoritative; the device-tree model is the fallback
+# for a kernel that does not register one. The reMarkable 1 reports two
+# different names depending on production batch, and both are in the wild.
+identity=$machine
+[ -n "$identity" ] || identity=$model
+case "$identity" in
+  "reMarkable Ferrari"|*"Paper Pro"*) device=rmpp ;;
+  "reMarkable 2.0") device=rm2 ;;
+  "reMarkable 1.0"|"reMarkable Prototype 1") device=rm1 ;;
+  *) echo "Refusing installation: connected device is not a supported reMarkable ($identity)" >&2; exit 20 ;;
 esac
 os_version=$(sed -n 's/^IMG_VERSION="\{0,1\}\([^" ]*\)"\{0,1\}$/\1/p' /etc/os-release | head -n1)
-case "$os_version" in 3.26.*|3.27.*) ;; *) echo "Refusing installation: unsupported reMarkable OS $os_version (supported: 3.26.x and 3.27.x)" >&2; exit 25;; esac
+# The reMarkable 1 no longer receives releases, so its supported window reaches
+# back to the last line it shipped instead of ending with the current one.
+case "$device" in
+  rm1) case "$os_version" in 3.2[0-7].*) ;; *) echo "Refusing installation: unsupported reMarkable OS $os_version on the reMarkable 1 (supported: 3.20.x to 3.27.x)" >&2; exit 25;; esac ;;
+  *) case "$os_version" in 3.26.*|3.27.*) ;; *) echo "Refusing installation: unsupported reMarkable OS $os_version (supported: 3.26.x and 3.27.x)" >&2; exit 25;; esac ;;
+esac
 
 [ -d /home/root/xovi ] || { echo "Compatible XOVI is not installed; inspect OS compatibility before installing it." >&2; exit 21; }
 [ -d "$APP_ROOT" ] || { echo "AppLoad application directory is missing: $APP_ROOT" >&2; exit 22; }
@@ -35,7 +47,12 @@ chmod 0755 "$STAGED/backend/entry" "$STAGED/scripts/brightness_guard.sh"
 chmod 0644 "$STAGED/manifest.json" "$STAGED/resources.rcc" "$STAGED/icon.png"
 chown -R root:root "$STAGED"
 
-"$STAGED/backend/entry" --self-check "$STAGED"
+# A bundle built for the other architecture fails here rather than at first
+# launch, and the exec error on its own would not explain why.
+if ! "$STAGED/backend/entry" --self-check "$STAGED"; then
+  echo "Refusing installation: the bundled backend did not run on this device ($(uname -m)); this payload was built for a different reMarkable architecture" >&2
+  exit 26
+fi
 
 if [ -e "$APP_DEST" ]; then
   stamp=$(date +%Y%m%d-%H%M%S)

@@ -142,9 +142,17 @@ func (c Config) NextActiveTime(at time.Time) time.Time {
 
 // Palette returns the configured dither palette, falling back to the default
 // when it is unset or contains no usable colours.
-func (c Config) Palette() []string {
+func (c Config) Palette() []string { return c.PaletteOr(nil) }
+
+// PaletteOr is Palette with the panel's own colours as the fallback. The
+// backend passes the detected device's palette so a greyscale reMarkable is not
+// dithered towards colours it cannot show.
+func (c Config) PaletteOr(panel []string) []string {
 	if len(c.DitherPalette) > 0 {
 		return c.DitherPalette
+	}
+	if len(panel) > 0 {
+		return panel
 	}
 	return DefaultDitherPalette
 }

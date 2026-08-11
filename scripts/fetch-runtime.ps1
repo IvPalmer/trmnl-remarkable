@@ -12,6 +12,17 @@ $assets = @(
         Url = 'https://github.com/asivery/rm-appload/releases/download/v0.5.3/appload-aarch64.zip'
         SHA256 = '032e3f2c57a004aba4425894758e4b542c67590efd222e3b3d5141124c45e84d'
     },
+    # The 32-bit builds are what the reMarkable 1 and 2 run.
+    @{
+        Name = 'xovi-arm32.tar.gz'
+        Url = 'https://github.com/asivery/rm-xovi-extensions/releases/download/v19-23052026/xovi-arm32.tar.gz'
+        SHA256 = '9aa00537ad41e9be0c3151992bfc25106465318cf5bb4c41cf59b3ddd4866377'
+    },
+    @{
+        Name = 'appload-arm32.zip'
+        Url = 'https://github.com/asivery/rm-appload/releases/download/v0.5.3/appload-arm32.zip'
+        SHA256 = 'dd68c6816c121934da78f59eb497c215e5a9729200de0a8a5bcbeaa5d0aa068b'
+    },
     @{
         Name = 'sources/xovi-v0.3.3-source.tar.gz'
         Url = 'https://github.com/asivery/xovi/archive/refs/tags/v0.3.3.tar.gz'
@@ -58,8 +69,13 @@ foreach ($asset in $assets) {
     if ($actual -ne $asset.SHA256) { throw "Checksum mismatch for $($asset.Name)" }
 }
 
-$appLoadOut = Join-Path $Destination 'appload-release'
-if (Test-Path -LiteralPath $appLoadOut) { Remove-Item -Recurse -LiteralPath $appLoadOut }
-Expand-Archive -LiteralPath (Join-Path $Destination 'appload-aarch64.zip') -DestinationPath $appLoadOut
+foreach ($archive in @(
+    @{ Zip = 'appload-aarch64.zip'; Out = 'appload-release' },
+    @{ Zip = 'appload-arm32.zip'; Out = 'appload-release-arm32' }
+)) {
+    $appLoadOut = Join-Path $Destination $archive.Out
+    if (Test-Path -LiteralPath $appLoadOut) { Remove-Item -Recurse -LiteralPath $appLoadOut }
+    Expand-Archive -LiteralPath (Join-Path $Destination $archive.Zip) -DestinationPath $appLoadOut
+}
 
 Write-Host "Verified runtime assets are ready in $Destination"
