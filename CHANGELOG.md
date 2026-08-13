@@ -1,5 +1,30 @@
 # Changelog
 
+## 2.4.0 - 2026-08-12
+
+### Fixed
+
+- The on-screen keyboard could not be dismissed in Settings
+  ([#9](https://github.com/usetrmnl/trmnl-remarkable/issues/9)). Tapping a text
+  field opened the reMarkable keyboard, which has no key that closes it, and
+  nothing on the page took focus away again, so it covered the lower half of
+  Settings until the page was closed. A **Hide keyboard** button now appears
+  beside the close button while a field is being edited, the keyboard's Enter
+  key closes it, and leaving Settings, Controls, or the brightness schedule
+  closes it as well.
+
+### Documentation
+
+- The README records the measured battery life on a Paper Pro with the front
+  light off.
+
+### Validation
+
+- Passed QML lint, a clean app load, and a focus-driven check of the dismissal
+  path against desktop Qt
+- Not yet exercised against the reMarkable on-screen keyboard on hardware; see
+  `docs/validation/v2.4.md`
+
 ## 2.3.0 - 2026-08-11
 
 ### Added

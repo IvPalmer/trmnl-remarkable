@@ -86,7 +86,7 @@ Full details: [compatibility](docs/compatibility.md).
    password it shows you. Charge above 20% and connect the USB cable.
 2. Download the release ZIP and `SHA256SUMS.txt`, then check the hash matches:
 ```powershell
-   Get-FileHash .\TRMNL-for-reMarkable-2.3.0-Windows-x64.zip -Algorithm SHA256
+   Get-FileHash .\TRMNL-for-reMarkable-2.4.0-Windows-x64.zip -Algorithm SHA256
 ```
 
 3. Extract the whole ZIP. Run **TRMNL Installer.exe** with the `payload` folder
@@ -201,6 +201,12 @@ Battery life comes down to how often the tablet wakes, how much it uses Wi-Fi,
 and the front light where there is one. A static e-ink image costs nothing to
 keep on screen.
 
+On a Paper Pro with the front light off, the recommended settings below, and a
+dashboard refreshing on the usual server interval, that works out to roughly
+nine days on a charge. Your own figure will differ with refresh rate, Wi-Fi
+quality, and front-light use; measure it with the built-in battery test rather
+than assuming this one.
+
 Recommended: leave reMarkable's **Auto-sleep** and **Light sleep** on, turn
 **Auto power-off** off, keep TRMNL's **Wake for refresh** on, and use the
 longest refresh interval you can live with.
@@ -286,7 +292,7 @@ and ShellCheck.
 
 ```powershell
 ./scripts/build.ps1
-./scripts/build-release.ps1 -Version 2.3.0
+./scripts/build-release.ps1 -Version 2.4.0
 ```
 
 `build.ps1` runs formatting, tests, `go vet`, both device cross-builds (ARM64

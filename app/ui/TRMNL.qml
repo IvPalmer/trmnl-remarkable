@@ -40,6 +40,12 @@ Rectangle {
     property int scheduleStartSlot: -1
     property int scheduleEndSlot: -1
     property bool scheduleDirty: false
+    // The reMarkable on-screen keyboard opens when a field takes focus and has
+    // no key of its own that closes it again, so the app has to offer the way
+    // out. Tracking the fields directly is more dependable than asking the
+    // platform input method whether its panel is on screen.
+    property bool keyboardVisible: apiKey.activeFocus || customURL.activeFocus || deviceID.activeFocus
+                                   || minRefresh.activeFocus || quietStart.activeFocus || quietEnd.activeFocus
 
     function unloading() { endpoint.terminate() }
     function fitValue() {
@@ -115,6 +121,14 @@ Rectangle {
         ditherMode.checked = c.dither === "auto"
         updateCheck.checked = !!c.update_check
     }
+    function dismissKeyboard() {
+        // Moving focus off the field is what closes the panel; the explicit
+        // hide covers input methods that leave it up until they are asked.
+        settingsFocusSink.forceActiveFocus()
+        // qmllint disable missing-property
+        Qt.inputMethod.hide()
+        // qmllint enable missing-property
+    }
     function requestNativeFullRefresh() {
         // AppLoad owns the framebuffer controller above this loaded component.
         // Its signal is the same full-panel refresh used by the five-finger
@@ -160,6 +174,7 @@ Rectangle {
         scheduleStartDay = scheduleEndDay = scheduleStartSlot = scheduleEndSlot = -1
     }
     function showBrightnessSchedule(show) {
+        dismissKeyboard()
         if (show) loadBrightnessSchedule()
         brightnessScheduleVisible = show
         controlsVisible = false
@@ -244,11 +259,13 @@ Rectangle {
         scheduleRefreshDelay.restart()
     }
     function showControls(show) {
+        dismissKeyboard()
         controlsVisible = show
         if (show) { settingsVisible = false; brightnessScheduleVisible = false }
         cleanScreen()
     }
     function showSettings(show) {
+        dismissKeyboard()
         if (show) configureFields()
         settingsVisible = show
         controlsVisible = false
@@ -310,6 +327,7 @@ Rectangle {
         function onStateChanged() {
             // qmllint disable missing-property
             if (Qt.application.state === Qt.ApplicationActive) {
+                root.dismissKeyboard()
                 root.controlsVisible = false
                 root.settingsVisible = false
                 root.brightnessScheduleVisible = false
@@ -464,17 +482,21 @@ Rectangle {
         id: settings
         visible: root.settingsVisible
         anchors.fill: parent; color: "#f4f2eb"; border.width: 3
+        // Somewhere for focus to go when the keyboard is dismissed. Nothing
+        // else on this page accepts it without also being a control the tap
+        // would then operate.
+        Item { id: settingsFocusSink }
         Flickable {
             anchors.fill: parent; anchors.margins: 34; contentHeight: settingsColumn.implicitHeight + 40; clip: true
             Column {
                 id: settingsColumn; width: parent.width; spacing: 18
                 Row { width: parent.width; Text { text: "TRMNL setup & settings"; font.pixelSize: 38; font.bold: true; width: parent.width - 120 } Button { text: "×"; width: 84; height: 70; font.pixelSize: 34; onClicked: root.showSettings(false) } }
                 Text { text: root.apiKeyConfigured ? "API key configured. Leave blank to keep it, or enter a replacement." : "Enter your TRMNL Device API key."; font.pixelSize: 21; width: parent.width; wrapMode: Text.Wrap }
-                TextField { id: apiKey; width: parent.width; height: 68; echoMode: TextInput.Password; placeholderText: "TRMNL Device API key"; font.pixelSize: 23 }
+                TextField { id: apiKey; width: parent.width; height: 68; echoMode: TextInput.Password; placeholderText: "TRMNL Device API key"; font.pixelSize: 23; onAccepted: root.dismissKeyboard() }
                 ComboBox { id: serverMode; width: parent.width; height: 68; model: ["TRMNL cloud", "Custom BYOS server"]; font.pixelSize: 23 }
-                TextField { id: customURL; visible: serverMode.currentIndex === 1; width: parent.width; height: 68; placeholderText: "https://your-server.example"; font.pixelSize: 23 }
-                TextField { id: deviceID; width: parent.width; height: 68; placeholderText: "Optional device ID / MAC address"; font.pixelSize: 23 }
-                Row { spacing: 18; width: parent.width; Text { text: "Minimum refresh seconds"; width: 330; font.pixelSize: 22; anchors.verticalCenter: parent.verticalCenter } TextField { id: minRefresh; width: 200; height: 64; inputMethodHints: Qt.ImhDigitsOnly; font.pixelSize: 22 } }
+                TextField { id: customURL; visible: serverMode.currentIndex === 1; width: parent.width; height: 68; placeholderText: "https://your-server.example"; font.pixelSize: 23; onAccepted: root.dismissKeyboard() }
+                TextField { id: deviceID; width: parent.width; height: 68; placeholderText: "Optional device ID / MAC address"; font.pixelSize: 23; onAccepted: root.dismissKeyboard() }
+                Row { spacing: 18; width: parent.width; Text { text: "Minimum refresh seconds"; width: 330; font.pixelSize: 22; anchors.verticalCenter: parent.verticalCenter } TextField { id: minRefresh; width: 200; height: 64; inputMethodHints: Qt.ImhDigitsOnly; font.pixelSize: 22; onAccepted: root.dismissKeyboard() } }
                 Row { spacing: 18; Text { text: "Image fit"; width: 180; font.pixelSize: 22; anchors.verticalCenter: parent.verticalCenter } ComboBox { id: fitMode; width: 240; height: 64; model: ["Fit", "Fill", "Stretch"]; font.pixelSize: 22 } Text { text: "Orientation"; width: 180; font.pixelSize: 22; anchors.verticalCenter: parent.verticalCenter } ComboBox { id: orientation; width: 240; height: 64; model: ["Auto", "Portrait", "Landscape"]; font.pixelSize: 22 } }
                 CheckBox { id: invertMode; text: "Dark / invert image"; font.pixelSize: 22 }
                 Text {
@@ -508,9 +530,9 @@ Rectangle {
                 Row {
                     spacing: 18; visible: quietHours.checked
                     Text { text: "From"; width: 80; font.pixelSize: 22; anchors.verticalCenter: parent.verticalCenter }
-                    TextField { id: quietStart; width: 150; height: 64; placeholderText: "23:00"; font.pixelSize: 22 }
+                    TextField { id: quietStart; width: 150; height: 64; placeholderText: "23:00"; font.pixelSize: 22; onAccepted: root.dismissKeyboard() }
                     Text { text: "until"; width: 90; font.pixelSize: 22; anchors.verticalCenter: parent.verticalCenter }
-                    TextField { id: quietEnd; width: 150; height: 64; placeholderText: "07:00"; font.pixelSize: 22 }
+                    TextField { id: quietEnd; width: 150; height: 64; placeholderText: "07:00"; font.pixelSize: 22; onAccepted: root.dismissKeyboard() }
                 }
                 Text {
                     visible: quietHours.checked; width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 19; color: "#444"
@@ -616,6 +638,19 @@ Rectangle {
                 Row { spacing: 14; Button { text: "Test connection"; width: 240; height: 78; font.pixelSize: 22; onClicked: { testResult.text = "Testing…"; endpoint.sendMessage(3, JSON.stringify(root.configFromFields())) } } Button { text: "Save"; width: 190; height: 78; font.pixelSize: 22; onClicked: { endpoint.sendMessage(2, JSON.stringify(root.configFromFields())); root.showSettings(false) } } Button { text: "Clear cache"; width: 190; height: 78; font.pixelSize: 22; onClicked: endpoint.sendMessage(7, "") } Button { text: "Reset"; width: 150; height: 78; font.pixelSize: 22; onClicked: endpoint.sendMessage(11, "") } }
                 Text { text: "Uninstall: /home/root/trmnl-remarkable/uninstall.sh\nRecovery: /home/root/trmnl-remarkable/recover-stock.sh\nRecovery tools: /home/root/trmnl-remarkable"; font.pixelSize: 19; width: parent.width; wrapMode: Text.Wrap; color: "#444" }
             }
+        }
+        // Declared after the Flickable so it stays above the scrolling content,
+        // and anchored to the top so the keyboard itself cannot cover it. A
+        // MouseArea rather than a Button: a Button takes focus when pressed,
+        // which would clear keyboardVisible and hide this control mid-tap.
+        Rectangle {
+            visible: root.keyboardVisible
+            anchors.top: parent.top; anchors.topMargin: 34
+            anchors.right: parent.right; anchors.rightMargin: 170
+            width: 260; height: 70; radius: 8
+            color: "#e2dfd7"; border.width: 2
+            Text { anchors.centerIn: parent; text: "Hide keyboard"; font.pixelSize: 23; font.bold: true; color: "#111" }
+            MouseArea { anchors.fill: parent; onClicked: root.dismissKeyboard() }
         }
     }
 
