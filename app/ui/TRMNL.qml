@@ -346,15 +346,39 @@ Rectangle {
         height: root.appConfig.orientation === "landscape" ? root.width : root.height
         rotation: root.appConfig.orientation === "landscape" ? 90 : 0
 
+        // remarkable-ai: white behind the image, so the inset below and the
+        // fit bands read as page margin rather than as a grey frame.
+        Rectangle { anchors.fill: parent; color: "#ffffff" }
+
         Image {
             id: dashboard
             anchors.fill: parent
+            // remarkable-ai: the Paper Pro's frame hides the outermost pixels
+            // of the landscape left edge, and TRMNL's calendar draws its time
+            // column flush against it. In landscape, keep an even white margin
+            // on every side. The render is 4:3 like the panel, but an equal
+            // margin leaves a box slightly wider than 4:3, so "fit" would make
+            // the side margins a third larger; stretching into the box is <1%
+            // off square and keeps the margins equal.
+            anchors.margins: root.width > root.height ? 16 : 0
             source: root.dashboardSource
-            fillMode: root.fitValue()
+            fillMode: root.width > root.height ? Image.Stretch : root.fitValue()
             smooth: true
             mipmap: true
             cache: false
             asynchronous: true
+        }
+
+        // remarkable-ai: the calendar also draws a 2px grey rule down its own
+        // left edge, right against the hour labels. With the white margin it
+        // is the only visible edge left, so paint it out.
+        Rectangle {
+            visible: dashboard.status === Image.Ready && root.width > root.height
+            color: "#ffffff"
+            x: dashboard.x + (dashboard.width - dashboard.paintedWidth) / 2
+            y: dashboard.y + (dashboard.height - dashboard.paintedHeight) / 2
+            width: Math.ceil(2 * dashboard.paintedWidth / Math.max(1, dashboard.sourceSize.width))
+            height: dashboard.paintedHeight
         }
     }
 
@@ -394,7 +418,10 @@ Rectangle {
 
     Rectangle {
         id: statusBadge
-        visible: root.statusText !== "" && !root.controlsVisible && !root.settingsVisible
+        // remarkable-ai: only when something is wrong. The routine "updated,
+        // next refresh in …" line sat on the dashboard permanently; it is still
+        // in the controls panel (top-right corner).
+        visible: root.offline && root.statusText !== "" && !root.controlsVisible && !root.settingsVisible
         anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: 18
         width: Math.min(statusLabel.implicitWidth + 34, parent.width * 0.72); height: 54
         color: root.offline ? "#f1d8d0" : "#eceae3"; border.width: 2; radius: 8; opacity: 0.93
