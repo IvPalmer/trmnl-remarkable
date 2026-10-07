@@ -29,7 +29,7 @@ Rectangle {
     readonly property var screen: view.section && view.section.screen ? view.section.screen : null
     readonly property bool landscape: view.width > view.height
     readonly property int gap: 24
-    readonly property int minRow: 420   // a grid row's least height; more rows scroll
+    readonly property int minRow: 240   // a grid row's least height; more rows scroll (with a cue)
     readonly property int maxBanners: 3 // alerts drawn; the rest are only counted
 
     signal refreshRequested()
@@ -492,6 +492,23 @@ Rectangle {
                     }
                 }
             }
+        }
+    }
+
+    // The grid scrolls only when its rows cannot fit even at minRow. E-ink shows
+    // no scroll bar, so say that there is more below until the end is reached.
+    Rectangle {
+        id: moreBelow
+        anchors.horizontalCenter: grid.horizontalCenter; anchors.bottom: grid.bottom
+        visible: grid.visible && grid.contentHeight > grid.height + 1 && !grid.atYEnd
+        width: moreText.implicitWidth + 32; height: moreText.implicitHeight + 12
+        color: "#ffffff"; border.width: 2; border.color: "#111111"; radius: 8
+        Text {
+            id: moreText
+            anchors.centerIn: parent
+            textFormat: Text.PlainText
+            font.pixelSize: 24; font.bold: true; color: "#111111"
+            text: "more below"
         }
     }
 
