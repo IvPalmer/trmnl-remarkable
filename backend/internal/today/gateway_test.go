@@ -2,6 +2,7 @@ package today
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -98,6 +99,26 @@ func TestGatewayErrorsCarryTheirMessage(t *testing.T) {
 	}
 }
 
+// A tablet screen can be larger than any other answer (a full grid of widgets
+// of up to 256 KiB each), so its path reads more than the usual 4 MiB. A cut
+// answer would be unreadable JSON, so the whole screen would be lost.
+func TestTheScreenAnswerMayExceedTheUsualLimit(t *testing.T) {
+	over := fmt.Sprintf(`{"widgets":{"demo.a":{"pad":%q}}}`, strings.Repeat("x", 4<<20+1024))
+	srv, _ := fakeProxy(t, 200, over)
+	g := gatewayVia(t, srv.URL)
+	var screen struct {
+		Widgets map[string]json.RawMessage `json:"widgets"`
+	}
+	if err := g.Get(context.Background(), "/screens/"+screenName, &screen); err != nil || len(screen.Widgets) != 1 {
+		t.Fatalf("screen read: err = %v, %d widgets", err, len(screen.Widgets))
+	}
+	// Every other read keeps the usual bound.
+	var out map[string]any
+	if err := g.Get(context.Background(), "/brief", &out); err == nil || !strings.Contains(err.Error(), "unreadable answer") {
+		t.Fatalf("a 4 MiB+ answer on another path read as %v, want unreadable", err)
+	}
+}
+
 func TestRedirectsAreNotFollowed(t *testing.T) {
 	srv, seen := fakeProxy(t, 302, `{}`)
 	err := gatewayVia(t, srv.URL).Get(context.Background(), "/brief", nil)
@@ -139,5 +160,26 @@ func TestUserMessages(t *testing.T) {
 		if got := UserMessage(c.err); got != c.want {
 			t.Errorf("UserMessage(%v) = %q, want %q", c.err, got, c.want)
 		}
+	}
+}
+
+// A widget action refuses with {ok, message, refresh, outcome}, not
+// {error}: its reason and outcome must survive.
+func TestAnActionsRefusalCarriesItsMessageAndOutcome(t *testing.T) {
+	srv, _ := fakeProxy(t, 409, `{"ok":false,"message":"no suggested transaction","refresh":true,"outcome":"refused"}`)
+	err := gatewayVia(t, srv.URL).Post(context.Background(), "/widgets/demo.money/actions/confirm",
+		map[string]string{"key": "k1", "screen": "tablet"}, nil)
+	var he *HTTPError
+	if !errors.As(err, &he) || he.Status != 409 || he.Message != "no suggested transaction" || he.Outcome != "refused" {
+		t.Fatalf("err = %#v", err)
+	}
+}
+
+func TestTheGatewaysErrorWinsOverAMessage(t *testing.T) {
+	srv, _ := fakeProxy(t, 403, `{"error":"route not granted","message":"other"}`)
+	err := gatewayVia(t, srv.URL).Get(context.Background(), "/screens/tablet", nil)
+	var he *HTTPError
+	if !errors.As(err, &he) || he.Message != "route not granted" || he.Outcome != "" {
+		t.Fatalf("err = %#v", err)
 	}
 }

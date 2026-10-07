@@ -24,8 +24,42 @@ MSG_TODAY = 18
 MSG_TODAY_ACT = 19
 MSG_TODAY_STATE = 109
 MSG_TODAY_RESULT = 110
-TODAY_FILE = {"name": "casa.md", "title": "Casa",
-              "open": [{"text": "Pagar IPTU 2026-01-01", "due": "2026-01-01", "section": "Pendências"}]}
+AS_OF = "2026-01-01T09:00:00-03:00"
+LAYOUT = {"screen": "tablet", "rev": 1, "grid": {"cols": 2}, "items": [
+    {"widget": "demo.notes", "view": "alert", "x": 0, "y": 0, "w": 2, "h": 1},
+    {"widget": "demo.tasks", "view": "list", "x": 0, "y": 1, "w": 1, "h": 2},
+    {"widget": "demo.money", "view": "stat", "x": 1, "y": 1, "w": 1, "h": 1},
+    {"widget": "demo.bots", "view": "spark", "x": 1, "y": 2, "w": 1, "h": 1},
+    {"widget": "demo.down", "view": "list", "x": 0, "y": 3, "w": 1, "h": 1},
+    # "table" was dropped: like any view the tablet doesn't know, it is "unavailable".
+    {"widget": "demo.money", "view": "table", "x": 1, "y": 3, "w": 1, "h": 1}]}
+TASK = {"key": "t:1", "title": "Pay invoice", "subtitle": "due today", "tone": "warn", "actions": ["tick", "purge"]}
+GATEWAY_STATE = {"ticked": False}
+
+
+def entry(wid, title, state, data=None, actions=(), error=None):
+    e = {"widget": wid, "app": "demo", "title": title, "views": [], "state": state, "actions": list(actions)}
+    if data is not None:
+        e["data"] = dict(data, id=wid.split(".")[1], title=title, as_of=AS_OF)
+    if error:
+        e["error"] = error
+    return e
+
+
+def screen():
+    items = [] if GATEWAY_STATE["ticked"] else [TASK]
+    return {"screen": "tablet", "layout": LAYOUT, "widgets": {
+        "demo.notes": entry("demo.notes", "Notes", "ok", {"alert": {"text": "Invoice closes soon", "tone": "warn"}}),
+        "demo.tasks": entry("demo.tasks", "Tasks", "ok", {"list": {"groups": [{"title": "Today", "items": items}]}},
+                            [{"id": "tick", "label": "Done", "scope": "item", "risk": "low"},
+                             {"id": "purge", "label": "Purge", "scope": "item", "risk": "high"}]),
+        "demo.money": entry("demo.money", "Money", "stale",
+                            {"stat": {"value": "1.234", "label": "Balance", "delta": "+56", "tone": "good"}}),
+        "demo.bots": entry("demo.bots", "Bots", "ok",
+                           {"spark": {"label": "Equity", "points": [10, 20, 15], "unit": "USD"}}),
+        "demo.down": entry("demo.down", "Down", "error", error="unavailable: Demo is down")}}
+
+
 SYSTEM_TERMINATE = 0xFFFFFFFF
 
 
@@ -78,14 +112,8 @@ class FakeGateway(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self._route()
-        if path == "/personal":
-            self._send(200, {"root": "/x", "exists": True, "files": [TODAY_FILE]})
-        elif path == "/mail":
-            self._send(200, {"accounts": [{"email": "a@example.com", "ok": True}], "messages": [
-                {"from_name": "Ana", "from_addr": "ana@example.com", "subject": "Contrato",
-                 "snippet": "Segue", "received": "2026-01-01T10:00:00+00:00"}]})
-        elif path == "/brief":
-            self._send(200, {"brief": None, "run": None})
+        if path == "/screens/tablet":
+            self._send(200, screen())
         elif path is not None:
             self._send(404, {"error": "no route"})
 
@@ -94,10 +122,11 @@ class FakeGateway(BaseHTTPRequestHandler):
         if path is None:
             return
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        if path != "/personal/items" or body != {"op": "tick", "file": "casa.md", "text": "Pagar IPTU 2026-01-01"}:
+        if path != "/widgets/demo.tasks/actions/tick" or body != {"key": "t:1", "screen": "tablet"}:
             self._send(400, {"error": f"unexpected {path} {body}"})
             return
-        self._send(200, {"ok": True, "file": dict(TODAY_FILE, open=[])})
+        GATEWAY_STATE["ticked"] = True
+        self._send(200, {"ok": True, "message": "Done", "refresh": True, "outcome": "done"})
 
     def log_message(self, *args):
         pass
@@ -132,7 +161,7 @@ def main():
         today_json.write_text(json.dumps({
             "gateway_url": "http://mac.test:8090", "proxy": "http://127.0.0.1:19989",
             "token_file": str(token), "timezone": "America/Sao_Paulo",
-            "sections": ["brief", "due", "mail"]}))
+            "sections": ["widgets"]}))
         today_json.chmod(0o600)
         gateway = ThreadingHTTPServer(("127.0.0.1", 19989), FakeGateway)
         threading.Thread(target=gateway.serve_forever, daemon=True).start()
@@ -176,25 +205,36 @@ def main():
                 send(conn, MSG_TODAY, "{}")
                 today = wait_until(conn, MSG_TODAY_STATE, lambda p: p.get("refreshing") is False, log)
                 assert today["configured"] is True, today
-                assert [s["id"] for s in today["sections"]] == ["brief", "due", "mail"], today
-                due = next(s for s in today["sections"] if s["id"] == "due")
-                assert due["status"] == "ok", due
-                item = due["groups"][0]["items"][0]
-                assert item["title"] == "Pagar IPTU 2026-01-01" and "file" not in item, item
-                send(conn, MSG_TODAY_ACT, json.dumps({"section": "due", "rev": due["rev"],
+                assert [s["id"] for s in today["sections"]] == ["widgets"], today
+                sec = today["sections"][0]
+                assert sec["status"] == "ok", sec
+                scr = sec["screen"]
+                assert [b["alert"]["text"] for b in scr["banners"]] == ["Invoice closes soon"], scr["banners"]
+                cells = scr["cells"]
+                assert [c["view"] for c in cells] == ["list", "stat", "spark", "list", "table"], cells
+                assert cells[1]["note"].endswith("· offline") and cells[1]["stat"]["trend"] == "up", cells[1]
+                assert cells[2]["spark"]["points"] == [0, 1, 0.5], cells[2]
+                assert cells[3]["problem"] is True and cells[3]["note"] == "unavailable: Demo is down", cells[3]
+                assert cells[4]["problem"] is True and cells[4]["note"].startswith("unavailable"), cells[4]
+                assert "stat" not in cells[4], cells[4]   # demo.money's stat data stays out of it
+                item = cells[0]["groups"][0]["items"][0]
+                # The high-risk action never reaches the view.
+                assert item["title"] == "Pay invoice" and [a["id"] for a in item["actions"]] == ["tick"], item
+                send(conn, MSG_TODAY_ACT, json.dumps({"section": "widgets", "rev": sec["rev"],
                                                       "action": "tick", "key": item["key"]}))
                 result = wait_until(conn, MSG_TODAY_RESULT, lambda p: True, log)
-                assert result["ok"] is True, result
-                after = wait_until(conn, MSG_TODAY_STATE, lambda p: p.get("refreshing") is False, log)
-                due_after = next(s for s in after["sections"] if s["id"] == "due")
-                assert due_after["groups"] == [], due_after
+                assert result["ok"] is True and result["message"] == "Done", result
+                # The answer carries no data: the refetch shows the item gone.
+                wait_until(conn, MSG_TODAY_STATE, lambda p: p.get("refreshing") is False
+                           and not p["sections"][0]["screen"]["cells"][0]["groups"][0]["items"], log)
                 cache = home / ".cache/trmnl-remarkable/today.json"
                 assert cache.stat().st_mode & 0o777 == 0o600
                 # Clear cache forgets Today's data too, in memory and on disk.
                 send(conn, MSG_CLEAR_CACHE)
                 cleared = wait_until(conn, MSG_TODAY_STATE, lambda p: all(
                     s["status"] == "none" for s in p["sections"]) and p.get("refreshing") is False, log)
-                assert [s["id"] for s in cleared["sections"]] == ["brief", "due", "mail"], cleared
+                assert [s["id"] for s in cleared["sections"]] == ["widgets"], cleared
+                assert "screen" not in cleared["sections"][0], cleared
                 assert not cache.exists()
                 wait_until(conn, MSG_STATUS, lambda p: p.get("message") == "Cache cleared", log)
                 # The token reaches neither the QML nor the log.

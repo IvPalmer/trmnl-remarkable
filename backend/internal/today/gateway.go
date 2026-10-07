@@ -25,10 +25,12 @@ type Client interface {
 var ErrTailscaleDown = errors.New("tailscale is not running on the tablet")
 
 // HTTPError is any answer other than 200. Message is the gateway's
-// {"error": …}, if it sent one.
+// {"error": …}, or a widget action's {"message": …}; Outcome is the
+// action's outcome ("refused", "denied", "unknown"), if it sent one.
 type HTTPError struct {
 	Status  int
 	Message string
+	Outcome string
 }
 
 func (e *HTTPError) Error() string {
@@ -47,6 +49,21 @@ type Gateway struct {
 }
 
 const requestTimeout = 15 * time.Second
+
+// An answer is read up to maxAnswer. The tablet screen is the exception: a
+// full grid of widgets of up to 256 KiB each can pass it, and a cut answer is
+// unreadable JSON, which would lose the whole screen.
+const (
+	maxAnswer       = 4 << 20
+	maxScreenAnswer = 16 << 20
+)
+
+func answerLimit(method, path string) int64 {
+	if method == http.MethodGet && path == "/screens/"+screenName {
+		return maxScreenAnswer
+	}
+	return maxAnswer
+}
 
 func NewGateway(cfg Config, token string) (*Gateway, error) {
 	if err := cfg.validate(); err != nil {
@@ -101,16 +118,22 @@ func (g *Gateway) do(ctx context.Context, method, path string, body, out any) er
 		return classify(err)
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, answerLimit(method, path)))
 	if err != nil {
 		return err
 	}
 	if resp.StatusCode != http.StatusOK {
 		var e struct {
-			Error string `json:"error"`
+			Error   string `json:"error"`
+			Message string `json:"message"`
+			Outcome string `json:"outcome"`
 		}
 		_ = json.Unmarshal(data, &e)
-		return &HTTPError{Status: resp.StatusCode, Message: e.Error}
+		msg := e.Error
+		if msg == "" {
+			msg = e.Message
+		}
+		return &HTTPError{Status: resp.StatusCode, Message: msg, Outcome: e.Outcome}
 	}
 	if out == nil {
 		return nil

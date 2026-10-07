@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+const dateLayout = "2006-01-02"
+
 const (
 	MsgToday     uint32 = 109
 	MsgActResult uint32 = 110
@@ -273,8 +275,8 @@ func (e *Engine) ClearCache() {
 
 // rebuildLocked rebuilds every section that has data as of now, so the view
 // left open across midnight regroups by the new date even when no fetch
-// succeeds. A section whose model changed in any way gets a new rev: due's
-// keys are list positions, so a moved key must make every open sheet stale.
+// succeeds. A section whose model changed in any way (keys included) gets a
+// new rev, so a sheet drawn from what is no longer shown can't act.
 func (e *Engine) rebuildLocked() {
 	now := e.now()
 	for _, id := range e.order {
@@ -345,11 +347,14 @@ func (e *Engine) saveLocked() {
 	}
 }
 
-// asOf words when data was fetched: the time alone for today's data, and
-// with the day for anything older, so a cache from last night never reads
-// as tonight's.
-func (e *Engine) asOf(fetchedAt time.Time) string {
-	at, now := fetchedAt.In(e.loc), e.now().In(e.loc)
+// asOf words when data was fetched; see asOfText.
+func (e *Engine) asOf(fetchedAt time.Time) string { return asOfText(fetchedAt, e.now(), e.loc) }
+
+// asOfText words a time the way the view shows it: the time alone for
+// today in loc, and with the day for anything older, so a cache from last
+// night never reads as tonight's.
+func asOfText(at, now time.Time, loc *time.Location) string {
+	at, now = at.In(loc), now.In(loc)
 	if at.Format(dateLayout) == now.Format(dateLayout) {
 		return at.Format("15:04")
 	}
@@ -361,7 +366,8 @@ func (e *Engine) snapshotLocked() Snapshot {
 	for _, id := range e.order {
 		st := e.sections[id]
 		sec := Section{ID: id, Rev: st.rev, Title: st.built.Title, Placement: st.src.Placement(),
-			Status: "none", Warning: st.built.Warning, Error: st.err, Groups: st.built.Groups}
+			Status: "none", Warning: st.built.Warning, Error: st.err, Groups: st.built.Groups,
+			Screen: st.built.Screen}
 		if sec.Title == "" {
 			sec.Title = st.src.Title() // most data brings no heading of its own
 		}
