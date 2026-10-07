@@ -263,7 +263,7 @@ func todayCachePath(home string) string {
 	return filepath.Join(home, ".cache", "trmnl-remarkable", "today.json")
 }
 
-// clearToday forgets Today's cached data (mail subjects, snippets, due items).
+// clearToday forgets Today's cached widget screen (list rows, values, alert text).
 // With Today on, the engine does it and also drops work already in flight.
 // Without it (no today.json, or one that cannot be used) the file an earlier
 // setup left behind is deleted here, so it cannot reappear when Today is set

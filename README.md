@@ -6,9 +6,9 @@ Readme · MD
 
 `IvPalmer/trmnl-remarkable` (branch `remarkable-ai`) is upstream v2.4.0 plus:
 
-- **Today**: a native screen (Menu → Today) with the operator's brief, due
-  personal items (tick them done from the tablet) and important mail, read
-  from a private gateway over Tailscale. It is off unless
+- **Today**: a native screen (Menu → Today) that draws the widgets a private
+  gateway places on the tablet's screen (stat, list, spark and alert
+  views, with item actions), over Tailscale. It is off unless
   `~/.config/trmnl-remarkable/today.json` exists. See [docs/TODAY.md](docs/TODAY.md).
 - Landscape display patches marked `remarkable-ai` in `app/ui/TRMNL.qml`.
 
