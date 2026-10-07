@@ -123,7 +123,7 @@ func TestUserMessages(t *testing.T) {
 		{&HTTPError{Status: 502}, "Can't reach the Mac"},
 		{&HTTPError{Status: 418}, "The Mac answered HTTP 418"},
 		{context.DeadlineExceeded, "Can't reach the Mac"},
-		// {ErrNoActions, "this section has no actions"}, // restored in Task 4
+		{ErrNoActions, "this section has no actions"},
 	} {
 		if got := UserMessage(c.err); got != c.want {
 			t.Errorf("UserMessage(%v) = %q, want %q", c.err, got, c.want)
