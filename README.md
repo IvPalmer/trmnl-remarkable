@@ -2,6 +2,19 @@
 Readme · MD
 # TRMNL for reMarkable
 
+## This fork
+
+`IvPalmer/trmnl-remarkable` (branch `remarkable-ai`) is upstream v2.4.0 plus:
+
+- **Today**: a native screen (Menu → Today) with the operator's brief, due
+  personal items (tick them done from the tablet) and important mail, read
+  from a private gateway over Tailscale. It is off unless
+  `~/.config/trmnl-remarkable/today.json` exists. See [docs/TODAY.md](docs/TODAY.md).
+- Landscape display patches marked `remarkable-ai` in `app/ui/TRMNL.qml`.
+
+It is installed by copying the built backend and `resources.rcc` over an
+existing upstream install, not with the Windows installer.
+
 Run a [TRMNL](https://trmnl.com) dashboard on a reMarkable device. The
 tablet fetches your dashboard on a schedule, keeps the last one cached for when
 the network drops, and sleeps in between.

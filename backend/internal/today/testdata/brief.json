@@ -1,0 +1,5 @@
+{"brief": {"id": "b1", "created": "2026-10-05T07:00:12.345678-03:00", "is_today": false, "title": "Bom dia, segunda",
+  "sections": [
+    {"title": "Agenda", "lines": ["**10h** dentista", "Ligar `banco`"]},
+    {"title": "Clima", "lines": ["Sol"]}]},
+ "run": {"at": "2026-10-05T07:00:00", "status": "ok", "message": "", "outcome": "sent"}}
