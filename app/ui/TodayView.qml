@@ -245,6 +245,7 @@ Rectangle {
         width: Math.min(parent.width - 96, 1200)
         visible: view.configured && !!view.section && !view.hasData(view.section)
         horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
+        maximumLineCount: 4; elide: Text.ElideRight
         font.pixelSize: 32
         color: view.section && view.section.status === "error" ? "#7a1515" : "#555"
         text: view.section ? (view.section.error || "No data yet") : ""
@@ -395,6 +396,7 @@ Rectangle {
                                     spacing: 6
                                     Text {
                                         textFormat: Text.PlainText
+                                        width: group.width; elide: Text.ElideRight
                                         visible: text !== ""; text: group.modelData.title || ""
                                         font.pixelSize: 24; font.bold: true; color: "#333"
                                     }

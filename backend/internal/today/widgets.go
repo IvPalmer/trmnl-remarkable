@@ -334,7 +334,9 @@ func buildSpark(v *sparkView) *Spark {
 	for _, p := range v.Points {
 		y := 0.5
 		if hi > lo {
-			y = (p - lo) / (hi - lo)
+			// Halved first: hi-lo can overflow to +Inf for finite values,
+			// and Inf/Inf is the NaN that json.Marshal refuses.
+			y = (p/2 - lo/2) / (hi/2 - lo/2)
 		}
 		s.Points = append(s.Points, y)
 	}

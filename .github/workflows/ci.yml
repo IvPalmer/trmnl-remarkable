@@ -36,6 +36,7 @@ jobs:
       - name: QML lint and resources
         run: |
           qmllint -W 0 -I tests/qml-stubs app/ui/TRMNL.qml app/ui/TodayView.qml
+          QT_QPA_PLATFORM=offscreen "$QT_ROOT_DIR/bin/qmltestrunner" -input tests/qml
           "$QT_ROOT_DIR/libexec/rcc" --binary -o /tmp/resources.rcc app/application.qrc
           test -s /tmp/resources.rcc
       # Paper Pro and the reMarkable 1/2 respectively.

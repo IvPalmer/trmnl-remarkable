@@ -8,7 +8,7 @@ import "../../app/ui"
 // (Controls buttons included) and in the confirm step; a Text that is not
 // would turn "<b>x</b>" into "x" and "&lt;" into "<".
 //
-// Not run by CI. From the repository root:
+// CI runs it (the "QML lint and resources" step). From the repository root:
 //   QT_QPA_PLATFORM=offscreen qmltestrunner -input tests/qml
 TestCase {
     id: tc

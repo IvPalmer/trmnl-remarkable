@@ -311,6 +311,15 @@ func TestSparkScaling(t *testing.T) {
 	if buildSpark(&sparkView{Label: "x", Points: []float64{5}}) != nil {
 		t.Fatal("one point drew a line")
 	}
+	// A range wider than a float64 holds still draws, and still marshals: a
+	// NaN or Inf point would fail json.Marshal and blank the whole screen.
+	wide := buildSpark(&sparkView{Label: "x", Points: []float64{-1.7e308, 0, 1.7e308}})
+	if !reflect.DeepEqual(wide.Points, []float64{0, 0.5, 1}) {
+		t.Fatalf("wide points = %v, want [0 0.5 1]", wide.Points)
+	}
+	if _, err := json.Marshal(wide); err != nil {
+		t.Fatalf("a wide spark does not marshal: %v", err)
+	}
 	for v, want := range map[float64]string{12480.5: "12480.5", 0.1 + 0.2: "0.3", -0.001: "0", 100: "100", -2.25: "-2.25"} {
 		if got := number(v); got != want {
 			t.Errorf("number(%v) = %q, want %q", v, got, want)
