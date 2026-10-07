@@ -64,8 +64,8 @@ func (f *fakeSource) Act(_ context.Context, _ Client, action string, ref ItemRef
 	return f.act(action, ref, raw)
 }
 
-// dayKeyed shows the same titles every day, but its keys carry the date, the
-// way due's keys carry list positions: only the keys move.
+// dayKeyed shows the same titles every day, but its keys carry the date:
+// only the keys move.
 type dayKeyed struct{ *fakeSource }
 
 func (d dayKeyed) Build(raw json.RawMessage, now time.Time, loc *time.Location) (Built, error) {
@@ -421,50 +421,6 @@ func TestActionsNameTheRevTheyWereDrawnFrom(t *testing.T) {
 	}
 }
 
-// Due's keys are list positions: after a tick the same key can name another
-// item, so only the rev stops an old sheet from ticking it.
-func TestATickThatMovesItemsMakesTheOldSheetStale(t *testing.T) {
-	data, err := os.ReadFile("testdata/personal.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := &fakeClient{get: map[string]string{"/personal": string(data)}, post: func(string, any) (string, error) {
-		// The first item is done, so the next one moves up to position 0.
-		return `{"ok":true,"file":{"name":"casa.md","title":"Casa","open":[{"text":"Renovar seguro 2026-10-13","due":"2026-10-13","section":"Pendências"}]}}`, nil
-	}}
-	rec := newRecorder()
-	e := New(context.Background(), client, []Source{DueSource{}}, saoPaulo(t),
-		filepath.Join(t.TempDir(), "today.json"), rec.emit, func() time.Time { return spNow })
-	e.Refresh()
-	rev := find(rec.snapshot(t), "due").Rev
-	e.Act("due", rev, "tick", "due:casa.md#0")
-	if r := rec.result(t); !r.OK || r.Message != "Done" {
-		t.Fatalf("tick = %+v", r)
-	}
-	after := find(rec.snapshot(t), "due")
-	if after.Rev == rev {
-		t.Fatalf("rev unchanged after the returned data replaced the section: %d", rev)
-	}
-	var moved string
-	for _, g := range after.Groups {
-		for _, it := range g.Items {
-			if it.Key == "due:casa.md#0" {
-				moved = it.Title
-			}
-		}
-	}
-	if moved != "Renovar seguro 2026-10-13" {
-		t.Fatalf("due:casa.md#0 is now %q; the test needs it to name another item", moved)
-	}
-	e.Act("due", rev, "tick", "due:casa.md#0")
-	if r := rec.result(t); r.OK || r.Message != "this list changed; check it again" {
-		t.Fatalf("old sheet = %+v", r)
-	}
-	if len(client.posts) != 1 {
-		t.Fatalf("the gateway got %d ticks, want 1", len(client.posts))
-	}
-}
-
 func TestASecondActionWhileOneRunsIsRefused(t *testing.T) {
 	release := make(chan struct{})
 	a := &fakeSource{id: "a", fetch: answer(`["x","y"]`), act: func(string, ItemRef, json.RawMessage) (ActResult, error) {
@@ -566,74 +522,25 @@ func TestARefusedActionThatAsksForARefetchGetsOne(t *testing.T) {
 	}
 }
 
-// Mail's Fetch succeeds when every account failed; Build is what fails.
+// A fetch whose data Build rejects counts as failed: the last good data
+// stays, in the view and in the cache.
 func TestAFetchWhoseDataCannotBeBuiltKeepsTheLastGoodData(t *testing.T) {
-	good, err := MailSource{}.Fetch(context.Background(), &fakeClient{get: map[string]string{
-		"/mail": mailJSON(2, `[{"email":"a@example.com","ok":true}]`)}})
-	if err != nil {
-		t.Fatal(err)
-	}
 	cache := filepath.Join(t.TempDir(), "today.json")
-	cachedAt20(t, cache, "mail", string(good))
-	client := &fakeClient{get: map[string]string{
-		"/mail": mailJSON(0, `[{"email":"a@example.com","ok":false,"error":"token expired"}]`)}}
+	cachedAt20(t, cache, "a", `["x","y"]`)
+	a := &fakeSource{id: "a", fetch: answer(`{"not":"a list"}`)}
 	rec := newRecorder()
-	e := New(context.Background(), client, []Source{MailSource{}}, time.UTC, cache, rec.emit, fixedNow)
-	before := find(e.Current(), "mail")
+	e := New(context.Background(), nil, []Source{a}, time.UTC, cache, rec.emit, fixedNow)
+	before := find(e.Current(), "a")
 	e.Refresh()
-	sec := find(rec.snapshot(t), "mail")
-	if sec.Status != "error" || sec.Error != "unavailable: no mail account could be read (a@example.com)" {
-		t.Fatalf("mail = %+v", sec)
+	sec := find(rec.snapshot(t), "a")
+	if sec.Status != "error" || !strings.HasPrefix(sec.Error, "unavailable: ") {
+		t.Fatalf("a = %+v", sec)
 	}
-	if titlesOf(sec) != "Assunto 0,Assunto 1" || sec.AsOf != "20:00" || sec.Rev != before.Rev {
+	if titlesOf(sec) != "x,y" || sec.AsOf != "20:00" || sec.Rev != before.Rev {
 		t.Fatalf("the last good data was replaced: %+v", sec)
 	}
-	if raw := string(loadCache(cache)["mail"].Raw); raw != string(good) {
+	if raw := string(loadCache(cache)["a"].Raw); raw != `["x","y"]` {
 		t.Fatalf("cache = %s", raw)
-	}
-}
-
-// The app left open across midnight, with the Mac asleep: the cached items
-// are regrouped by the new date before anything is sent.
-func TestCachedDataIsRegroupedAfterMidnightEvenOffline(t *testing.T) {
-	loc := saoPaulo(t)
-	cache := filepath.Join(t.TempDir(), "today.json")
-	at := time.Date(2026, 10, 6, 21, 0, 0, 0, loc)
-	if err := saveCache(cache, map[string]cachedSection{"due": {Raw: dueFixture(t), FetchedAt: at}}); err != nil {
-		t.Fatal(err)
-	}
-	clk := newClock(spNow) // 22:30 on the 6th in São Paulo
-	client := &fakeClient{err: map[string]error{"/personal": &HTTPError{Status: 502}}}
-	rec := newRecorder()
-	e := New(context.Background(), client, []Source{DueSource{}}, loc, cache, rec.emit, clk.now)
-	before := find(e.Current(), "due")
-	if groupsOf(before) != "Overdue|Today|Next 7 days" {
-		t.Fatalf("before midnight = %s", groupsOf(before))
-	}
-	if before.AsOf != "21:00" {
-		t.Fatalf("before midnight as of %q, want the time alone", before.AsOf)
-	}
-
-	clk.set(time.Date(2026, 10, 7, 0, 30, 0, 0, loc))
-	e.Refresh()
-	first := find(parseSnapshot(t, rec.waitFor(t, func(m recorded) bool { return m.typ == MsgToday }).body), "due")
-	if groupsOf(first) != "Overdue|Next 7 days" || len(first.Groups[0].Items) != 3 {
-		t.Fatalf("first message after midnight = %+v", first.Groups)
-	}
-	if first.Rev == before.Rev {
-		t.Fatal("regrouped without a new rev")
-	}
-	sec := find(rec.snapshot(t), "due")
-	// Fetched at 21:00 yesterday: the view must not read "as of 21:00".
-	if sec.Status != "error" || sec.Error != "offline" || sec.AsOf != "Tue 6 Oct 21:00" || groupsOf(sec) != "Overdue|Next 7 days" {
-		t.Fatalf("settled = %+v", sec)
-	}
-
-	// Nothing changed since: another Refresh keeps the rev, so an open sheet
-	// stays valid.
-	e.Refresh()
-	if again := find(rec.snapshot(t), "due"); again.Rev != sec.Rev {
-		t.Fatalf("rev %d → %d with nothing changed", sec.Rev, again.Rev)
 	}
 }
 
@@ -742,26 +649,24 @@ func TestClearCacheForgetsEverything(t *testing.T) {
 
 // Opening Today refreshes it. A refresh that changes nothing keeps the rev,
 // so the sheet on screen still acts; one that changes the list refuses it.
-// The batch's 109 waits for every section, so a sibling is held mid-fetch to
-// act before it arrives, with only the last-sent rev in hand.
+// A sibling is held mid-fetch so the action runs before the batch's 109.
 func TestARefreshThatChangesNothingKeepsTheRev(t *testing.T) {
-	fixture, err := os.ReadFile("testdata/personal.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	changed := strings.Replace(string(fixture), "Pagar **IPTU**", "Pagar **IPVA**", 1)
 	for _, tc := range []struct {
 		name    string
 		second  string
-		posts   int
+		acts    int32
 		message string
 	}{
-		{"identical data", string(fixture), 1, "Done"},
-		{"changed data", changed, 0, "this list changed; check it again"},
+		{"identical data", `["x"]`, 1, "Done"},
+		{"changed data", `["x","y"]`, 0, "this list changed; check it again"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			client := &fakeClient{get: map[string]string{"/personal": string(fixture)}, post: func(string, any) (string, error) {
-				return `{"ok":true,"file":{"name":"casa.md","title":"Casa","open":[]}}`, nil
+			var data atomic.Value
+			data.Store(`["x"]`)
+			a := &fakeSource{id: "a", fetch: func() (json.RawMessage, error) {
+				return json.RawMessage(data.Load().(string)), nil
+			}, act: func(string, ItemRef, json.RawMessage) (ActResult, error) {
+				return ActResult{Message: "Done"}, nil
 			}}
 			release := make(chan struct{})
 			var calls atomic.Int32
@@ -771,26 +676,26 @@ func TestARefreshThatChangesNothingKeepsTheRev(t *testing.T) {
 				}
 				return json.RawMessage(`["x"]`), nil
 			}}
-			clk := newClock(spNow) // 22:30 in São Paulo
+			clk := newClock(fixedNow())
 			rec := newRecorder()
-			e := New(context.Background(), client, []Source{DueSource{}, sibling}, saoPaulo(t),
+			e := New(context.Background(), nil, []Source{a, sibling}, time.UTC,
 				filepath.Join(t.TempDir(), "today.json"), rec.emit, clk.now)
 			e.Refresh()
-			rev := find(rec.snapshot(t), "due").Rev
+			rev := find(rec.snapshot(t), "a").Rev
 
-			client.get["/personal"] = tc.second
-			clk.set(spNow.Add(5 * time.Minute))
+			data.Store(tc.second)
+			clk.set(fixedNow().Add(5 * time.Minute))
 			e.Refresh()
-			// due's fetch has landed (its time moved); the sibling still blocks.
-			waitUntil(t, func() bool { return find(e.Current(), "due").AsOf == "22:35" })
-			e.Act("due", rev, "tick", "due:casa.md#0")
-			if r := rec.result(t); r.OK != (tc.posts == 1) || r.Message != tc.message {
-				t.Fatalf("tick = %+v", r)
+			// a's fetch has landed (its time moved); the sibling still blocks.
+			waitUntil(t, func() bool { return find(e.Current(), "a").AsOf == "21:05" })
+			e.Act("a", rev, "do", "a:x")
+			if r := rec.result(t); r.OK != (tc.acts == 1) || r.Message != tc.message {
+				t.Fatalf("act = %+v", r)
 			}
 			close(release)
 			rec.snapshot(t)
-			if len(client.posts) != tc.posts {
-				t.Fatalf("the gateway got %d ticks, want %d", len(client.posts), tc.posts)
+			if n := a.acts.Load(); n != tc.acts {
+				t.Fatalf("the source acted %d times, want %d", n, tc.acts)
 			}
 		})
 	}
@@ -842,30 +747,23 @@ func TestClearCacheDropsWorkAlreadyRunning(t *testing.T) {
 		}
 	}
 
-	t.Run("a tick", func(t *testing.T) {
-		data, err := os.ReadFile("testdata/personal.json")
-		if err != nil {
-			t.Fatal(err)
-		}
+	t.Run("an action", func(t *testing.T) {
 		release := make(chan struct{})
-		client := &fakeClient{get: map[string]string{"/personal": string(data)}, post: func(string, any) (string, error) {
+		a := &fakeSource{id: "a", fetch: answer(`["x"]`), act: func(string, ItemRef, json.RawMessage) (ActResult, error) {
 			<-release
-			return `{"ok":true,"file":{"name":"casa.md","title":"Casa","open":[]}}`, nil
+			return ActResult{Raw: json.RawMessage(`["y"]`), Message: "Done"}, nil
 		}}
-		cache := filepath.Join(t.TempDir(), "today.json")
-		rec := newRecorder()
-		e := New(context.Background(), client, []Source{DueSource{}}, saoPaulo(t), cache, rec.emit,
-			func() time.Time { return spNow })
+		e, rec, cache := newEngine(t, a)
 		e.Refresh()
-		rev := find(rec.snapshot(t), "due").Rev
-		e.Act("due", rev, "tick", "due:casa.md#0")
+		rev := find(rec.snapshot(t), "a").Rev
+		e.Act("a", rev, "do", "a:x")
 		e.ClearCache()
 		rec.snapshot(t)
 		close(release)
 		if r := rec.result(t); !r.OK {
-			t.Fatalf("tick = %+v", r) // it did happen at the gateway
+			t.Fatalf("action = %+v", r) // it did happen at the gateway
 		}
-		gone(t, find(rec.snapshot(t), "due"), cache)
+		gone(t, find(rec.snapshot(t), "a"), cache)
 	})
 
 	t.Run("a fetch", func(t *testing.T) {

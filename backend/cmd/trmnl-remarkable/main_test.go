@@ -360,12 +360,12 @@ func TestOpenTodayNeedsAKnownSection(t *testing.T) {
 
 func TestOpenTodayKeepsTheKnownSectionsAmongUnknownOnes(t *testing.T) {
 	home := t.TempDir()
-	writeTodayConfig(t, home, map[string]any{"sections": []string{"nonsense", "due"}})
+	writeTodayConfig(t, home, map[string]any{"sections": []string{"nonsense", "widgets"}})
 	e, problem := openToday(context.Background(), home, func(uint32, string) {})
 	if e == nil || problem != "" {
 		t.Fatalf("openToday = %v, %q", e, problem)
 	}
-	if got := e.Current().Sections; len(got) != 1 || got[0].ID != "due" {
+	if got := e.Current().Sections; len(got) != 1 || got[0].ID != "widgets" {
 		t.Fatalf("sections = %+v", got)
 	}
 }
@@ -469,15 +469,15 @@ func decodeRefusal(t *testing.T, reply string) map[string]any {
 }
 
 func TestTodayActRefusalsCarryTheWholeReply(t *testing.T) {
-	request := `{"section":"due","rev":1790000000000,"action":"tick","key":"due:casa.md#0"}`
+	request := `{"section":"widgets","rev":1790000000000,"action":"tick","key":"demo.tasks t:41"}`
 	off := &app{}
 	m := decodeRefusal(t, off.todayAct(request))
-	if m["section"] != "due" || m["action"] != "tick" || m["key"] != "due:casa.md#0" || m["message"] != "Today is not set up" {
+	if m["section"] != "widgets" || m["action"] != "tick" || m["key"] != "demo.tasks t:41" || m["message"] != "Today is not set up" {
 		t.Fatalf("off: %v", m)
 	}
 	broken := &app{todayProblem: "today.json: proxy is required"}
 	m = decodeRefusal(t, broken.todayAct(request))
-	if m["message"] != "today.json: proxy is required" || m["section"] != "due" {
+	if m["message"] != "today.json: proxy is required" || m["section"] != "widgets" {
 		t.Fatalf("broken: %v", m)
 	}
 	m = decodeRefusal(t, off.todayAct("{"))
@@ -497,8 +497,8 @@ func TestTodayActRefusalsCarryTheWholeReply(t *testing.T) {
 		t.Fatalf("on, unreadable: %v", m)
 	}
 	// A field of the wrong type fails the decode; what did decode is echoed.
-	m = decodeRefusal(t, on.todayAct(`{"section":"due","rev":"x","action":"tick","key":"k"}`))
-	if m["section"] != "due" || m["key"] != "k" || m["message"] != "bad action request" {
+	m = decodeRefusal(t, on.todayAct(`{"section":"widgets","rev":"x","action":"tick","key":"k"}`))
+	if m["section"] != "widgets" || m["key"] != "k" || m["message"] != "bad action request" {
 		t.Fatalf("on, bad rev: %v", m)
 	}
 }

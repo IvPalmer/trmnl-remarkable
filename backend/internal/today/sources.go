@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 )
 
@@ -135,9 +134,10 @@ type ActResult struct {
 
 var ErrNoActions = errors.New("this section has no actions")
 
-// Source is one section of Today. To add one: implement this in its own file,
-// add it to Registry, and allow its route in the gateway's grant for the
-// tablet if the route is new. The QML needs no change.
+// Source is one section of Today. Today has one, widgets: the gateway's
+// screen, whose widgets and apps arrive at runtime, so a new widget needs
+// no change here. A test can register a fake Source; the QML draws a
+// section's Screen.
 type Source interface {
 	ID() string
 	// Title is the section's heading unless Build supplies one.
@@ -154,7 +154,7 @@ type Source interface {
 
 // Registry is every section Today knows, in the default order.
 func Registry() []Source {
-	return []Source{BriefSource{}, DueSource{}, MailSource{}}
+	return []Source{WidgetsSource{}}
 }
 
 // Enabled picks the sources named in order (all of Registry when order is
@@ -181,6 +181,3 @@ func Enabled(order []string) (sources []Source, unknown []string) {
 	}
 	return sources, unknown
 }
-
-// plain drops the bold and code marks the gateway's brief lines carry.
-func plain(s string) string { return strings.NewReplacer("**", "", "`", "").Replace(s) }

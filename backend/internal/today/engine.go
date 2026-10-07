@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+const dateLayout = "2006-01-02"
+
 const (
 	MsgToday     uint32 = 109
 	MsgActResult uint32 = 110
@@ -273,8 +275,8 @@ func (e *Engine) ClearCache() {
 
 // rebuildLocked rebuilds every section that has data as of now, so the view
 // left open across midnight regroups by the new date even when no fetch
-// succeeds. A section whose model changed in any way gets a new rev: due's
-// keys are list positions, so a moved key must make every open sheet stale.
+// succeeds. A section whose model changed in any way (keys included) gets a
+// new rev, so a sheet drawn from what is no longer shown can't act.
 func (e *Engine) rebuildLocked() {
 	now := e.now()
 	for _, id := range e.order {
