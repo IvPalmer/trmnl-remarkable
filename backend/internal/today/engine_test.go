@@ -913,3 +913,32 @@ func TestNotConfiguredSaysWhy(t *testing.T) {
 		t.Fatalf("snapshot = %+v", s)
 	}
 }
+
+// screened is a fakeSource whose model also carries a Screen.
+type screened struct{ *fakeSource }
+
+func (s screened) Build(raw json.RawMessage, now time.Time, loc *time.Location) (Built, error) {
+	b, err := s.fakeSource.Build(raw, now, loc)
+	b.Screen = &Screen{Cols: 2, Rows: 1, Banners: []Cell{},
+		Cells: []Cell{{View: "stat", W: 1, H: 1, Title: "x", Tone: "neutral"}}}
+	return b, err
+}
+
+func TestASectionCarriesItsScreen(t *testing.T) {
+	e, rec, _ := newEngine(t,
+		screened{&fakeSource{id: "a", fetch: answer(`["x"]`)}},
+		&fakeSource{id: "b", fetch: answer(`["y"]`)})
+	e.Refresh()
+	snap := rec.snapshot(t)
+	sec := find(snap, "a")
+	if sec.Screen == nil || len(sec.Screen.Cells) != 1 || sec.Screen.Cells[0].Title != "x" {
+		t.Fatalf("screen = %+v", sec.Screen)
+	}
+	if !strings.Contains(mustJSON(sec), `"screen":{"cols":2,"rows":1`) {
+		t.Fatalf("109 section = %s", mustJSON(sec))
+	}
+	// A section without a screen sends no "screen" key at all, not null.
+	if b := mustJSON(find(snap, "b")); strings.Contains(b, `"screen"`) {
+		t.Fatalf("a section without a screen sends one: %s", b)
+	}
+}

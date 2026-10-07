@@ -25,10 +25,12 @@ type Client interface {
 var ErrTailscaleDown = errors.New("tailscale is not running on the tablet")
 
 // HTTPError is any answer other than 200. Message is the gateway's
-// {"error": …}, if it sent one.
+// {"error": …}, or a widget action's {"message": …}; Outcome is the
+// action's outcome ("refused", "denied", "unknown"), if it sent one.
 type HTTPError struct {
 	Status  int
 	Message string
+	Outcome string
 }
 
 func (e *HTTPError) Error() string {
@@ -107,10 +109,16 @@ func (g *Gateway) do(ctx context.Context, method, path string, body, out any) er
 	}
 	if resp.StatusCode != http.StatusOK {
 		var e struct {
-			Error string `json:"error"`
+			Error   string `json:"error"`
+			Message string `json:"message"`
+			Outcome string `json:"outcome"`
 		}
 		_ = json.Unmarshal(data, &e)
-		return &HTTPError{Status: resp.StatusCode, Message: e.Error}
+		msg := e.Error
+		if msg == "" {
+			msg = e.Message
+		}
+		return &HTTPError{Status: resp.StatusCode, Message: msg, Outcome: e.Outcome}
 	}
 	if out == nil {
 		return nil

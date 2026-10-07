@@ -141,3 +141,24 @@ func TestUserMessages(t *testing.T) {
 		}
 	}
 }
+
+// A widget action refuses with {ok, message, refresh, outcome}, not
+// {error}: its reason and outcome must survive.
+func TestAnActionsRefusalCarriesItsMessageAndOutcome(t *testing.T) {
+	srv, _ := fakeProxy(t, 409, `{"ok":false,"message":"no suggested transaction","refresh":true,"outcome":"refused"}`)
+	err := gatewayVia(t, srv.URL).Post(context.Background(), "/widgets/demo.money/actions/confirm",
+		map[string]string{"key": "k1", "screen": "tablet"}, nil)
+	var he *HTTPError
+	if !errors.As(err, &he) || he.Status != 409 || he.Message != "no suggested transaction" || he.Outcome != "refused" {
+		t.Fatalf("err = %#v", err)
+	}
+}
+
+func TestTheGatewaysErrorWinsOverAMessage(t *testing.T) {
+	srv, _ := fakeProxy(t, 403, `{"error":"route not granted","message":"other"}`)
+	err := gatewayVia(t, srv.URL).Get(context.Background(), "/screens/tablet", nil)
+	var he *HTTPError
+	if !errors.As(err, &he) || he.Message != "route not granted" || he.Outcome != "" {
+		t.Fatalf("err = %#v", err)
+	}
+}

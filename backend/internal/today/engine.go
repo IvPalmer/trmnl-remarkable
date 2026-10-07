@@ -345,11 +345,14 @@ func (e *Engine) saveLocked() {
 	}
 }
 
-// asOf words when data was fetched: the time alone for today's data, and
-// with the day for anything older, so a cache from last night never reads
-// as tonight's.
-func (e *Engine) asOf(fetchedAt time.Time) string {
-	at, now := fetchedAt.In(e.loc), e.now().In(e.loc)
+// asOf words when data was fetched; see asOfText.
+func (e *Engine) asOf(fetchedAt time.Time) string { return asOfText(fetchedAt, e.now(), e.loc) }
+
+// asOfText words a time the way the view shows it: the time alone for
+// today in loc, and with the day for anything older, so a cache from last
+// night never reads as tonight's.
+func asOfText(at, now time.Time, loc *time.Location) string {
+	at, now = at.In(loc), now.In(loc)
 	if at.Format(dateLayout) == now.Format(dateLayout) {
 		return at.Format("15:04")
 	}
@@ -361,7 +364,8 @@ func (e *Engine) snapshotLocked() Snapshot {
 	for _, id := range e.order {
 		st := e.sections[id]
 		sec := Section{ID: id, Rev: st.rev, Title: st.built.Title, Placement: st.src.Placement(),
-			Status: "none", Warning: st.built.Warning, Error: st.err, Groups: st.built.Groups}
+			Status: "none", Warning: st.built.Warning, Error: st.err, Groups: st.built.Groups,
+			Screen: st.built.Screen}
 		if sec.Title == "" {
 			sec.Title = st.src.Title() // most data brings no heading of its own
 		}
