@@ -170,6 +170,7 @@ Rectangle {
         height: 96
         color: "#f4f2eb"
         Text {
+            textFormat: Text.PlainText
             anchors.left: parent.left; anchors.leftMargin: 32; anchors.verticalCenter: parent.verticalCenter
             text: "Today"; font.pixelSize: 44; font.bold: true; color: "#111"
         }
@@ -179,6 +180,7 @@ Rectangle {
     // unreachable) or another error beside the cached screen.
     Text {
         id: statusStrip
+        textFormat: Text.PlainText
         anchors.left: parent.left; anchors.right: parent.right; anchors.top: header.bottom
         anchors.leftMargin: 32; anchors.rightMargin: 32; anchors.topMargin: 12
         visible: view.configured && view.hasData(view.section) && text !== ""
@@ -196,6 +198,7 @@ Rectangle {
         height: 120
         color: "#f4f2eb"
         Text {
+            textFormat: Text.PlainText
             anchors.left: parent.left; anchors.leftMargin: 32
             anchors.right: footerButtons.left; anchors.rightMargin: 24
             anchors.verticalCenter: parent.verticalCenter
@@ -223,10 +226,12 @@ Rectangle {
         visible: !view.configured
         spacing: 20
         Text {
+            textFormat: Text.PlainText
             width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
             text: "Today isn't set up on this tablet"; font.pixelSize: 36; font.bold: true; color: "#111"
         }
         Text {
+            textFormat: Text.PlainText
             width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
             text: view.problem || "Run bin/rm-today-setup on the Mac."; font.pixelSize: 24; color: "#444"
         }
@@ -235,6 +240,7 @@ Rectangle {
     // No data at all: the error (the plea to wake the Mac, Tailscale, the
     // grant) or "No data yet", once, in the middle.
     Text {
+        textFormat: Text.PlainText
         anchors.centerIn: parent
         width: Math.min(parent.width - 96, 1200)
         visible: view.configured && !!view.section && !view.hasData(view.section)
@@ -245,6 +251,7 @@ Rectangle {
     }
 
     Text {
+        textFormat: Text.PlainText
         anchors.centerIn: parent
         visible: view.configured && view.hasData(view.section) && view.nothingPlaced()
         text: "Nothing is placed on this screen yet"; font.pixelSize: 28; color: "#555"
@@ -269,6 +276,7 @@ Rectangle {
                 border.color: "#333333"
                 Text {
                     id: bannerText
+                    textFormat: Text.PlainText
                     anchors.left: parent.left; anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter; anchors.margins: 16
                     wrapMode: Text.Wrap; maximumLineCount: 3; elide: Text.ElideRight
@@ -287,6 +295,7 @@ Rectangle {
         id: grid
         anchors.left: parent.left; anchors.right: parent.right
         anchors.top: banners.bottom; anchors.bottom: footer.top; anchors.margins: 24
+        anchors.topMargin: banners.height > 0 ? 24 : 0
         visible: view.configured && view.hasData(view.section)
         clip: true
         boundsBehavior: Flickable.StopAtBounds
@@ -302,23 +311,25 @@ Rectangle {
                 x: cellFrame.modelData.x; y: cellFrame.modelData.y
                 width: cellFrame.modelData.w; height: cellFrame.modelData.h
                 color: "#ffffff"; radius: 8
-                border.width: view.heavy(cellFrame.cell.tone) ? 4 : 2; border.color: "#999999"
+                border.width: view.heavy(cellFrame.cell.tone) ? 4 : 2; border.color: "#666666"
 
                 Column {
                     id: cellHead
                     anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 16
                     spacing: 2
                     Text {
+                        textFormat: Text.PlainText
                         width: cellHead.width; elide: Text.ElideRight
                         text: view.marker(cellFrame.cell.tone) + (cellFrame.cell.title || "")
                         font.pixelSize: 30; font.bold: true; color: "#111"
                     }
                     Text {
+                        textFormat: Text.PlainText
                         width: cellHead.width; visible: text !== ""
                         wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
                         text: cellFrame.cell.note || ""
                         font.pixelSize: 20; font.bold: !!cellFrame.cell.problem
-                        color: cellFrame.cell.problem ? "#7a1515" : "#555"
+                        color: cellFrame.cell.problem ? "#7a1515" : "#333"
                     }
                 }
 
@@ -330,6 +341,7 @@ Rectangle {
                     visible: !cellFrame.cell.problem
 
                     Text {
+                        textFormat: Text.PlainText
                         visible: view.empty(cellFrame.cell)
                         text: "Nothing here"; font.pixelSize: 24; color: "#555"
                     }
@@ -341,20 +353,23 @@ Rectangle {
                         width: cellBody.width
                         spacing: 6
                         Text {
+                            textFormat: Text.PlainText
                             width: statBody.width; elide: Text.ElideRight
                             font.pixelSize: 72; font.bold: true; color: "#111"
                             text: !cellFrame.cell.stat ? "" : (cellFrame.cell.stat.value || "")
                                   + (cellFrame.cell.stat.trend === "up" ? " ▲" : cellFrame.cell.stat.trend === "down" ? " ▼" : "")
                         }
                         Text {
+                            textFormat: Text.PlainText
                             width: statBody.width; elide: Text.ElideRight
                             font.pixelSize: 26; color: "#111"
                             font.bold: !!cellFrame.cell.stat && view.heavy(cellFrame.cell.stat.tone)
                             text: !cellFrame.cell.stat ? "" : view.marker(cellFrame.cell.stat.tone) + (cellFrame.cell.stat.label || "")
                         }
                         Text {
+                            textFormat: Text.PlainText
                             width: statBody.width; elide: Text.ElideRight; visible: text !== ""
-                            font.pixelSize: 22; color: "#555"
+                            font.pixelSize: 22; color: "#333"
                             text: cellFrame.cell.stat ? (cellFrame.cell.stat.delta || "") : ""
                         }
                     }
@@ -379,6 +394,7 @@ Rectangle {
                                     width: listBody.width
                                     spacing: 6
                                     Text {
+                                        textFormat: Text.PlainText
                                         visible: text !== ""; text: group.modelData.title || ""
                                         font.pixelSize: 24; font.bold: true; color: "#333"
                                     }
@@ -396,11 +412,13 @@ Rectangle {
                                                 anchors.left: parent.left; anchors.right: parent.right
                                                 anchors.verticalCenter: parent.verticalCenter; anchors.margins: 14
                                                 Text {
+                                                    textFormat: Text.PlainText
                                                     width: rowText.width; wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
                                                     text: view.marker(row.modelData.tone) + (row.modelData.title || "")
                                                     font.pixelSize: 26; font.bold: view.heavy(row.modelData.tone); color: "#111"
                                                 }
                                                 Text {
+                                                    textFormat: Text.PlainText
                                                     width: rowText.width; elide: Text.ElideRight; visible: text !== ""
                                                     text: row.modelData.subtitle || ""; font.pixelSize: 20; color: "#555"
                                                 }
@@ -424,6 +442,7 @@ Rectangle {
                         visible: cellFrame.cell.view === "spark" && !!cellFrame.cell.spark
                         spacing: 6
                         Text {
+                            textFormat: Text.PlainText
                             width: sparkBody.width; elide: Text.ElideRight
                             font.pixelSize: 24; color: "#111"
                             text: !cellFrame.cell.spark ? "" : (cellFrame.cell.spark.label || "") + "  " + (cellFrame.cell.spark.last || "")
@@ -452,6 +471,7 @@ Rectangle {
                             }
                         }
                         Text {
+                            textFormat: Text.PlainText
                             width: sparkBody.width; elide: Text.ElideRight
                             font.pixelSize: 20; color: "#555"
                             text: cellFrame.cell.spark ? "min " + cellFrame.cell.spark.min + " · max " + cellFrame.cell.spark.max : ""
@@ -478,23 +498,26 @@ Rectangle {
                 id: sheetBody
                 anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 32
                 spacing: 18
-                Text { width: sheetBody.width; elide: Text.ElideRight; font.pixelSize: 22; color: "#555"; visible: text !== ""
+                Text { textFormat: Text.PlainText; width: sheetBody.width; elide: Text.ElideRight; font.pixelSize: 22; color: "#555"; visible: text !== ""
                        text: view.sheetWidget }
                 // Line limits keep the buttons on the screen whatever the text.
-                Text { width: sheetBody.width; wrapMode: Text.Wrap; maximumLineCount: 4; elide: Text.ElideRight
+                Text { textFormat: Text.PlainText; width: sheetBody.width; wrapMode: Text.Wrap; maximumLineCount: 4; elide: Text.ElideRight
                        font.pixelSize: 34; font.bold: true; color: "#111"
                        text: view.sheetItem ? (view.sheetItem.title || "") : "" }
-                Text { width: sheetBody.width; wrapMode: Text.Wrap; font.pixelSize: 24; color: "#555"; visible: text !== ""
+                Text { textFormat: Text.PlainText; width: sheetBody.width; wrapMode: Text.Wrap; maximumLineCount: 3; elide: Text.ElideRight
+                       font.pixelSize: 24; color: "#555"; visible: text !== ""
                        text: view.sheetItem ? (view.sheetItem.subtitle || "") : "" }
-                Text { width: sheetBody.width; wrapMode: Text.Wrap; maximumLineCount: 14; elide: Text.ElideRight
+                Text { textFormat: Text.PlainText; width: sheetBody.width; wrapMode: Text.Wrap; maximumLineCount: 14; elide: Text.ElideRight
                        font.pixelSize: 26; color: "#111"; visible: text !== ""
                        text: view.sheetItem ? (view.sheetItem.detail || "") : "" }
-                Text { width: sheetBody.width; wrapMode: Text.Wrap; font.pixelSize: 22; color: "#7a1515"; visible: text !== ""
+                Text { textFormat: Text.PlainText; width: sheetBody.width; wrapMode: Text.Wrap; maximumLineCount: 3; elide: Text.ElideRight
+                       font.pixelSize: 22; color: "#7a1515"; visible: text !== ""
                        text: view.sheetMessage }
                 // A medium action's question, in the catalog's words.
-                Text { width: sheetBody.width; wrapMode: Text.Wrap; font.pixelSize: 28; font.bold: true; color: "#111"
+                Text { textFormat: Text.PlainText; width: sheetBody.width; wrapMode: Text.Wrap; maximumLineCount: 4; elide: Text.ElideRight
+                       font.pixelSize: 28; font.bold: true; color: "#111"
                        visible: view.confirming !== null
-                       text: view.confirming ? (view.confirming.confirm || "") : "" }
+                       text: view.confirming ? (view.confirming.confirm || (view.confirming.label || "") + "?") : "" }
                 Flow {
                     width: sheetBody.width
                     spacing: 16
@@ -505,17 +528,32 @@ Rectangle {
                             required property var modelData
                             width: 260; height: 88; font.pixelSize: 26
                             enabled: !view.acting
-                            text: view.acting && view.actingSerial === view.sheetSerial
-                                  && view.actingAction === (actionButton.modelData.id || "")
-                                  ? "…" : (actionButton.modelData.label || "")
+                            // The label is gateway text. A Button parses its own text as rich text
+                            // (an <img> in it crashes Qt), so a plain Text draws it and `text` stays empty.
+                            Text {
+                                anchors.fill: parent; anchors.margins: 12
+                                textFormat: Text.PlainText; elide: Text.ElideRight; font: actionButton.font
+                                horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                                color: actionButton.enabled ? "#111" : "#777"
+                                text: view.acting && view.actingSerial === view.sheetSerial
+                                      && view.actingAction === (actionButton.modelData.id || "")
+                                      ? "…" : (actionButton.modelData.label || "")
+                            }
                             onClicked: view.tap(actionButton.modelData)
                         }
                     }
                     Button {
+                        id: yesButton
                         visible: view.confirming !== null
                         width: 340; height: 88; font.pixelSize: 26
                         enabled: !view.acting
-                        text: view.confirming ? "Yes, " + (view.confirming.label || "") : ""
+                        Text {   // the label is gateway text, as above
+                            anchors.fill: parent; anchors.margins: 12
+                            textFormat: Text.PlainText; elide: Text.ElideRight; font: yesButton.font
+                            horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                            color: yesButton.enabled ? "#111" : "#777"
+                            text: view.confirming ? "Yes, " + (view.confirming.label || "") : ""
+                        }
                         onClicked: view.run(view.confirming)
                     }
                     Button {

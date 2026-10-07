@@ -58,6 +58,8 @@ def screen():
         "demo.bots": entry("demo.bots", "Bots", "ok",
                            {"spark": {"label": "Equity", "points": [10, 20, 15], "unit": "USD"}}),
         "demo.down": entry("demo.down", "Down", "error", error="unavailable: Demo is down")}}
+
+
 SYSTEM_TERMINATE = 0xFFFFFFFF
 
 
