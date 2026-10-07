@@ -50,6 +50,21 @@ type Gateway struct {
 
 const requestTimeout = 15 * time.Second
 
+// An answer is read up to maxAnswer. The tablet screen is the exception: a
+// full grid of widgets of up to 256 KiB each can pass it, and a cut answer is
+// unreadable JSON, which would lose the whole screen.
+const (
+	maxAnswer       = 4 << 20
+	maxScreenAnswer = 16 << 20
+)
+
+func answerLimit(method, path string) int64 {
+	if method == http.MethodGet && path == "/screens/"+screenName {
+		return maxScreenAnswer
+	}
+	return maxAnswer
+}
+
 func NewGateway(cfg Config, token string) (*Gateway, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -103,7 +118,7 @@ func (g *Gateway) do(ctx context.Context, method, path string, body, out any) er
 		return classify(err)
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, answerLimit(method, path)))
 	if err != nil {
 		return err
 	}

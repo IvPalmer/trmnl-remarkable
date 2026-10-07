@@ -2,6 +2,7 @@ package today
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -95,6 +96,26 @@ func TestGatewayErrorsCarryTheirMessage(t *testing.T) {
 	var he *HTTPError
 	if !errors.As(err, &he) || he.Status != 409 || he.Message != "no open item matches" {
 		t.Fatalf("err = %#v", err)
+	}
+}
+
+// A tablet screen can be larger than any other answer (a full grid of widgets
+// of up to 256 KiB each), so its path reads more than the usual 4 MiB. A cut
+// answer would be unreadable JSON, so the whole screen would be lost.
+func TestTheScreenAnswerMayExceedTheUsualLimit(t *testing.T) {
+	over := fmt.Sprintf(`{"widgets":{"demo.a":{"pad":%q}}}`, strings.Repeat("x", 4<<20+1024))
+	srv, _ := fakeProxy(t, 200, over)
+	g := gatewayVia(t, srv.URL)
+	var screen struct {
+		Widgets map[string]json.RawMessage `json:"widgets"`
+	}
+	if err := g.Get(context.Background(), "/screens/"+screenName, &screen); err != nil || len(screen.Widgets) != 1 {
+		t.Fatalf("screen read: err = %v, %d widgets", err, len(screen.Widgets))
+	}
+	// Every other read keeps the usual bound.
+	var out map[string]any
+	if err := g.Get(context.Background(), "/brief", &out); err == nil || !strings.Contains(err.Error(), "unreadable answer") {
+		t.Fatalf("a 4 MiB+ answer on another path read as %v, want unreadable", err)
 	}
 }
 

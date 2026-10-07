@@ -331,12 +331,20 @@ func buildSpark(v *sparkView) *Spark {
 	}
 	s := &Spark{Label: v.Label, Unit: v.Unit, Min: number(lo), Max: number(hi),
 		Last: number(v.Points[len(v.Points)-1]), Points: make([]float64, 0, len(v.Points))}
+	// Scaled directly. Only when hi-lo overflows to +Inf (finite values far
+	// apart) are the points halved first, which would underflow a tiny span.
+	span := hi - lo
 	for _, p := range v.Points {
 		y := 0.5
-		if hi > lo {
-			// Halved first: hi-lo can overflow to +Inf for finite values,
-			// and Inf/Inf is the NaN that json.Marshal refuses.
+		switch {
+		case math.IsInf(span, 1):
 			y = (p/2 - lo/2) / (hi/2 - lo/2)
+		case span > 0:
+			y = (p - lo) / span
+		}
+		// A NaN or Inf point would fail json.Marshal and blank the whole screen.
+		if math.IsNaN(y) || math.IsInf(y, 0) {
+			y = 0.5
 		}
 		s.Points = append(s.Points, y)
 	}

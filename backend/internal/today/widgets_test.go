@@ -311,14 +311,25 @@ func TestSparkScaling(t *testing.T) {
 	if buildSpark(&sparkView{Label: "x", Points: []float64{5}}) != nil {
 		t.Fatal("one point drew a line")
 	}
-	// A range wider than a float64 holds still draws, and still marshals: a
-	// NaN or Inf point would fail json.Marshal and blank the whole screen.
-	wide := buildSpark(&sparkView{Label: "x", Points: []float64{-1.7e308, 0, 1.7e308}})
-	if !reflect.DeepEqual(wide.Points, []float64{0, 0.5, 1}) {
-		t.Fatalf("wide points = %v, want [0 0.5 1]", wide.Points)
-	}
-	if _, err := json.Marshal(wide); err != nil {
-		t.Fatalf("a wide spark does not marshal: %v", err)
+	// A range the arithmetic cannot normalise directly still draws, and still
+	// marshals: one NaN or Inf point fails json.Marshal and blanks the whole
+	// screen. Too wide: hi-lo overflows. Too narrow: the span is subnormal.
+	for _, c := range []struct {
+		name   string
+		points []float64
+		want   []float64
+	}{
+		{"too wide", []float64{-1.7e308, 0, 1.7e308}, []float64{0, 0.5, 1}},
+		{"too narrow", []float64{0, 5e-324}, []float64{0, 1}},
+		{"narrow and negative", []float64{-1e-323, -5e-324, 0}, []float64{0, 0.5, 1}},
+	} {
+		got := buildSpark(&sparkView{Label: "x", Points: c.points})
+		if !reflect.DeepEqual(got.Points, c.want) {
+			t.Errorf("%s: points = %v, want %v", c.name, got.Points, c.want)
+		}
+		if _, err := json.Marshal(got); err != nil {
+			t.Errorf("%s: does not marshal: %v", c.name, err)
+		}
 	}
 	for v, want := range map[float64]string{12480.5: "12480.5", 0.1 + 0.2: "0.3", -0.001: "0", 100: "100", -2.25: "-2.25"} {
 		if got := number(v); got != want {

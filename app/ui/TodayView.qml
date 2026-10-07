@@ -30,6 +30,7 @@ Rectangle {
     readonly property bool landscape: view.width > view.height
     readonly property int gap: 24
     readonly property int minRow: 420   // a grid row's least height; more rows scroll
+    readonly property int maxBanners: 3 // alerts drawn; the rest are only counted
 
     signal refreshRequested()
     signal actionRequested(string section, real rev, string action, string key)
@@ -258,14 +259,17 @@ Rectangle {
         text: "Nothing is placed on this screen yet"; font.pixelSize: 28; color: "#555"
     }
 
-    // Alerts, across the top. One with nothing to say never arrives.
+    // Alerts, across the top. One with nothing to say never arrives. At most
+    // maxBanners are drawn, two lines each, so the grid keeps its room; a line
+    // counts the others.
     Column {
         id: banners
+        readonly property int total: view.screen ? (view.screen.banners || []).length : 0
         anchors.left: parent.left; anchors.right: parent.right; anchors.top: statusStrip.bottom; anchors.margins: 24
         spacing: 10
         visible: view.configured && view.hasData(view.section)
         Repeater {
-            model: view.screen ? (view.screen.banners || []) : []
+            model: view.screen ? (view.screen.banners || []).slice(0, view.maxBanners) : []
             delegate: Rectangle {
                 id: banner
                 required property var modelData
@@ -280,7 +284,7 @@ Rectangle {
                     textFormat: Text.PlainText
                     anchors.left: parent.left; anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter; anchors.margins: 16
-                    wrapMode: Text.Wrap; maximumLineCount: 3; elide: Text.ElideRight
+                    wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
                     font.pixelSize: 26; font.bold: view.heavy(banner.tone)
                     color: banner.modelData.problem ? "#7a1515" : "#111"
                     text: banner.modelData.problem
@@ -289,6 +293,13 @@ Rectangle {
                             + (banner.modelData.note ? "   (" + banner.modelData.note + ")" : "")
                 }
             }
+        }
+        Text {
+            textFormat: Text.PlainText
+            width: banners.width; elide: Text.ElideRight
+            visible: banners.total > view.maxBanners
+            font.pixelSize: 24; color: "#555"
+            text: "+" + (banners.total - view.maxBanners) + (banners.total - view.maxBanners === 1 ? " more alert" : " more alerts")
         }
     }
 
