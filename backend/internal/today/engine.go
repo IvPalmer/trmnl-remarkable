@@ -59,7 +59,9 @@ type sectionState struct {
 //   - an action names the rev it was drawn from;
 //   - a fetch that started before an action finished is dropped;
 //   - refetch requests are a set, fetched once after the running fetch;
-//   - a section's rev changes whenever its model does.
+//   - a section's rev changes whenever its model does; a fetch or rebuild
+//     that changes nothing keeps it;
+//   - nothing begun before a Clear cache is committed after it.
 //
 // Network calls run without the lock; everything else holds it.
 type Engine struct {
@@ -77,6 +79,7 @@ type Engine struct {
 	fetching bool
 	acting   bool
 	pending  map[string]bool
+	clears   uint64 // ClearCache calls: work begun before the latest is dropped
 }
 
 func New(ctx context.Context, client Client, sources []Source, loc *time.Location,
@@ -134,10 +137,10 @@ func (e *Engine) fetch(ids []string, required bool) {
 		started[id] = e.sections[id].actions
 	}
 	e.emitSnapshotLocked()
-	go e.runFetch(ids, started)
+	go e.runFetch(ids, started, e.clears)
 }
 
-func (e *Engine) runFetch(ids []string, started map[string]uint64) {
+func (e *Engine) runFetch(ids []string, started map[string]uint64, clears uint64) {
 	var wg sync.WaitGroup
 	for _, id := range ids {
 		st := e.sections[id]
@@ -151,17 +154,23 @@ func (e *Engine) runFetch(ids []string, started map[string]uint64) {
 			}
 			e.mu.Lock()
 			defer e.mu.Unlock()
-			if st.actions != started[id] {
+			switch {
+			case e.clears != clears:
+				return // the cache was cleared meanwhile; nothing comes back
+			case st.actions != started[id]:
 				return // an action finished meanwhile; its data is newer
-			}
-			if err != nil {
+			case err != nil:
 				// Build failed too, or Fetch did: the last good data stays,
 				// in the model and in the cache.
 				st.err = failure(err, st.raw != nil)
 				return
 			}
+			// Opening Today refreshes it: a refresh that changes nothing
+			// keeps the rev, so the sheet on screen can still act.
+			if st.raw == nil || !reflect.DeepEqual(b, st.built) {
+				st.rev = e.nextRev()
+			}
 			st.raw, st.built, st.fetchedAt, st.err = raw, b, e.now(), ""
-			st.rev = e.nextRev()
 			e.saveLocked()
 		}()
 	}
@@ -201,10 +210,10 @@ func (e *Engine) Act(sectionID string, rev uint64, action, key string) {
 		return
 	}
 	e.acting = true
-	go e.runAct(st, sectionID, action, key, ref, st.raw)
+	go e.runAct(st, sectionID, action, key, ref, st.raw, e.clears)
 }
 
-func (e *Engine) runAct(st *sectionState, sectionID, action, key string, ref ItemRef, raw json.RawMessage) {
+func (e *Engine) runAct(st *sectionState, sectionID, action, key string, ref ItemRef, raw json.RawMessage, clears uint64) {
 	res, err := st.src.Act(e.ctx, e.client, action, ref, raw)
 	var b Built
 	var berr error
@@ -214,13 +223,17 @@ func (e *Engine) runAct(st *sectionState, sectionID, action, key string, ref Ite
 	e.mu.Lock()
 	e.acting = false
 	st.actions++
-	if err == nil && res.Raw != nil && berr == nil {
-		st.raw, st.built, st.fetchedAt, st.err = res.Raw, b, e.now(), ""
-		st.rev = e.nextRev()
-		e.saveLocked()
-	}
-	if res.Refetch || berr != nil {
-		e.pending[sectionID] = true
+	// After a Clear cache, what the action returned (merged into the data it
+	// started from) and the refetch it asked for are both dropped.
+	if e.clears == clears {
+		if err == nil && res.Raw != nil && berr == nil {
+			st.raw, st.built, st.fetchedAt, st.err = res.Raw, b, e.now(), ""
+			st.rev = e.nextRev()
+			e.saveLocked()
+		}
+		if res.Refetch || berr != nil {
+			e.pending[sectionID] = true
+		}
 	}
 	var next []string
 	if !e.fetching {
@@ -241,10 +254,13 @@ func (e *Engine) runAct(st *sectionState, sectionID, action, key string, ref Ite
 	}
 }
 
-// ClearCache forgets every section's data, on disk too.
+// ClearCache forgets every section's data, on disk too. A fetch or action
+// already running, and a refetch already queued, can no longer bring it back.
 func (e *Engine) ClearCache() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.clears++
+	e.pending = map[string]bool{}
 	for _, st := range e.sections {
 		st.raw, st.built, st.fetchedAt, st.err = nil, Built{}, time.Time{}, ""
 		st.rev = e.nextRev()

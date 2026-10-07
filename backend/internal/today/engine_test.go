@@ -207,6 +207,18 @@ func groupsOf(s Section) string {
 	return strings.Join(out, "|")
 }
 
+// waitUntil polls cond, for state no message announces yet.
+func waitUntil(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for a condition")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func fixedNow() time.Time { return time.Date(2026, 10, 6, 21, 0, 0, 0, time.UTC) }
 
 func newEngine(t *testing.T, srcs ...Source) (*Engine, *recorder, string) {
@@ -686,6 +698,170 @@ func TestClearCacheForgetsEverything(t *testing.T) {
 	if _, err := os.Stat(cache); !os.IsNotExist(err) {
 		t.Fatalf("cache still there: %v", err)
 	}
+}
+
+// Opening Today refreshes it. A refresh that changes nothing keeps the rev,
+// so the sheet on screen still acts; one that changes the list refuses it.
+// The batch's 109 waits for every section, so a sibling is held mid-fetch to
+// act before it arrives, with only the last-sent rev in hand.
+func TestARefreshThatChangesNothingKeepsTheRev(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/personal.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := strings.Replace(string(fixture), "Pagar **IPTU**", "Pagar **IPVA**", 1)
+	for _, tc := range []struct {
+		name    string
+		second  string
+		posts   int
+		message string
+	}{
+		{"identical data", string(fixture), 1, "Done"},
+		{"changed data", changed, 0, "this list changed; check it again"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &fakeClient{get: map[string]string{"/personal": string(fixture)}, post: func(string, any) (string, error) {
+				return `{"ok":true,"file":{"name":"casa.md","title":"Casa","open":[]}}`, nil
+			}}
+			release := make(chan struct{})
+			var calls atomic.Int32
+			sibling := &fakeSource{id: "b", fetch: func() (json.RawMessage, error) {
+				if calls.Add(1) > 1 {
+					<-release
+				}
+				return json.RawMessage(`["x"]`), nil
+			}}
+			clk := newClock(spNow) // 22:30 in São Paulo
+			rec := newRecorder()
+			e := New(context.Background(), client, []Source{DueSource{}, sibling}, saoPaulo(t),
+				filepath.Join(t.TempDir(), "today.json"), rec.emit, clk.now)
+			e.Refresh()
+			rev := find(rec.snapshot(t), "due").Rev
+
+			client.get["/personal"] = tc.second
+			clk.set(spNow.Add(5 * time.Minute))
+			e.Refresh()
+			// due's fetch has landed (its time moved); the sibling still blocks.
+			waitUntil(t, func() bool { return find(e.Current(), "due").AsOf == "22:35" })
+			e.Act("due", rev, "tick", "due:casa.md#0")
+			if r := rec.result(t); r.OK != (tc.posts == 1) || r.Message != tc.message {
+				t.Fatalf("tick = %+v", r)
+			}
+			close(release)
+			rec.snapshot(t)
+			if len(client.posts) != tc.posts {
+				t.Fatalf("the gateway got %d ticks, want %d", len(client.posts), tc.posts)
+			}
+		})
+	}
+}
+
+// Revs start from the clock: a sheet drawn before a restart never matches
+// one drawn after it, even from the same cache.
+func TestARevFromBeforeARestartIsRefused(t *testing.T) {
+	cache := filepath.Join(t.TempDir(), "today.json")
+	cachedAt20(t, cache, "a", `["x"]`)
+	first := New(context.Background(), nil, []Source{&fakeSource{id: "a", fetch: answer(`["x"]`)}},
+		time.UTC, cache, newRecorder().emit, fixedNow)
+	rev := find(first.Current(), "a").Rev
+
+	second := &fakeSource{id: "a", fetch: answer(`["x"]`), act: func(string, ItemRef, json.RawMessage) (ActResult, error) {
+		return ActResult{}, nil
+	}}
+	rec := newRecorder()
+	later := func() time.Time { return fixedNow().Add(time.Minute) }
+	e := New(context.Background(), nil, []Source{second}, time.UTC, cache, rec.emit, later)
+	e.Act("a", rev, "do", "a:x")
+	if r := rec.result(t); r.OK || r.Message != "this list changed; check it again" {
+		t.Fatalf("old rev = %+v", r)
+	}
+	if n := second.acts.Load(); n != 0 {
+		t.Fatalf("the source acted %d times", n)
+	}
+}
+
+// Clear cache is a privacy control: nothing begun before it brings the data
+// back, in the view or on disk.
+func TestClearCacheDropsWorkAlreadyRunning(t *testing.T) {
+	gone := func(t *testing.T, sec Section, cache string) {
+		t.Helper()
+		if sec.Status != "none" || len(sec.Groups) != 0 || sec.AsOf != "" {
+			t.Fatalf("after the clear = %+v", sec)
+		}
+		if _, err := os.Stat(cache); !os.IsNotExist(err) {
+			t.Fatalf("the cache came back: %v", err)
+		}
+	}
+	blockedAfterFirst := func(release chan struct{}) func() (json.RawMessage, error) {
+		var calls atomic.Int32
+		return func() (json.RawMessage, error) {
+			if calls.Add(1) > 1 {
+				<-release
+			}
+			return json.RawMessage(`["x"]`), nil
+		}
+	}
+
+	t.Run("a tick", func(t *testing.T) {
+		data, err := os.ReadFile("testdata/personal.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		release := make(chan struct{})
+		client := &fakeClient{get: map[string]string{"/personal": string(data)}, post: func(string, any) (string, error) {
+			<-release
+			return `{"ok":true,"file":{"name":"casa.md","title":"Casa","open":[]}}`, nil
+		}}
+		cache := filepath.Join(t.TempDir(), "today.json")
+		rec := newRecorder()
+		e := New(context.Background(), client, []Source{DueSource{}}, saoPaulo(t), cache, rec.emit,
+			func() time.Time { return spNow })
+		e.Refresh()
+		rev := find(rec.snapshot(t), "due").Rev
+		e.Act("due", rev, "tick", "due:casa.md#0")
+		e.ClearCache()
+		rec.snapshot(t)
+		close(release)
+		if r := rec.result(t); !r.OK {
+			t.Fatalf("tick = %+v", r) // it did happen at the gateway
+		}
+		gone(t, find(rec.snapshot(t), "due"), cache)
+	})
+
+	t.Run("a fetch", func(t *testing.T) {
+		release := make(chan struct{})
+		a := &fakeSource{id: "a", fetch: blockedAfterFirst(release)}
+		e, rec, cache := newEngine(t, a)
+		e.Refresh()
+		rec.snapshot(t)
+		e.Refresh() // blocks
+		e.ClearCache()
+		close(release)
+		gone(t, find(rec.snapshot(t), "a"), cache)
+	})
+
+	t.Run("a refetch queued before it", func(t *testing.T) {
+		release := make(chan struct{})
+		a := &fakeSource{id: "a", fetch: blockedAfterFirst(release), act: func(string, ItemRef, json.RawMessage) (ActResult, error) {
+			return ActResult{Refetch: true}, &HTTPError{Status: 409, Message: "file changed, retry"}
+		}}
+		e, rec, cache := newEngine(t, a)
+		e.Refresh()
+		rev := find(rec.snapshot(t), "a").Rev
+		e.Refresh() // blocks
+		e.Act("a", rev, "do", "a:x")
+		if r := rec.result(t); r.OK {
+			t.Fatalf("result = %+v", r)
+		}
+		e.ClearCache()
+		close(release)
+		sec := find(rec.snapshot(t), "a")
+		time.Sleep(50 * time.Millisecond)
+		if n := a.fetches.Load(); n != 2 {
+			t.Fatalf("fetches = %d, want 2: the queued refetch ran after the clear", n)
+		}
+		gone(t, sec, cache)
+	})
 }
 
 func TestNotConfiguredSaysWhy(t *testing.T) {
