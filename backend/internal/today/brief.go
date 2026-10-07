@@ -38,6 +38,19 @@ func (BriefSource) Fetch(ctx context.Context, c Client) (json.RawMessage, error)
 	return json.Marshal(s)
 }
 
+// briefDay is the calendar day of created in loc. The gateway writes created
+// as a Python isoformat() timestamp with an offset (microseconds optional);
+// a bare date is read as that day. ok is false when it is neither.
+func briefDay(created string, loc *time.Location) (day string, ok bool) {
+	if t, err := time.Parse(time.RFC3339Nano, created); err == nil {
+		return t.In(loc).Format(dateLayout), true
+	}
+	if d, err := time.Parse(dateLayout, created); err == nil {
+		return d.Format(dateLayout), true
+	}
+	return "", false
+}
+
 // Build decides "today" from the brief's own date against now in loc, so a
 // brief cached yesterday warns after midnight. The gateway's is_today, frozen
 // when it was fetched, is only the fallback when created is not a date.
@@ -56,9 +69,9 @@ func (BriefSource) Build(raw json.RawMessage, now time.Time, loc *time.Location)
 		loc = time.UTC
 	}
 	isToday, created := s.Brief.IsToday, ""
-	if d, err := time.Parse(dateLayout, s.Brief.Created); err == nil {
-		created = d.Format(dateLayout)
-		isToday = created == now.In(loc).Format(dateLayout)
+	if day, ok := briefDay(s.Brief.Created, loc); ok {
+		created = day
+		isToday = day == now.In(loc).Format(dateLayout)
 	}
 	if !isToday {
 		b.Warning = "not today's brief"

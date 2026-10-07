@@ -3,6 +3,7 @@ package today
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -83,25 +84,43 @@ func TestBriefKeepsItsOwnTitle(t *testing.T) {
 	}
 }
 
-// is_today is frozen when the gateway answers; the date is what ages.
+// is_today is frozen when the gateway answers; the date is what ages. The
+// gateway writes created as a Python isoformat() timestamp with an offset.
 func TestBriefIsTodayFollowsTheClock(t *testing.T) {
 	brt := time.FixedZone("BRT", -3*60*60)
-	const raw = `{"brief":{"created":"2026-10-05","is_today":true,"sections":[]}}`
+	const stamp = "2026-10-05T07:00:12.345678-03:00"
 	for _, c := range []struct {
-		name string
-		now  time.Time
-		loc  *time.Location
-		want string
+		name    string
+		created string
+		isToday bool
+		now     time.Time
+		loc     *time.Location
+		want    string
 	}{
-		{"its own day", time.Date(2026, 10, 5, 23, 30, 0, 0, brt), brt, ""},
-		{"after midnight", time.Date(2026, 10, 6, 0, 30, 0, 0, brt), brt, "not today's brief (2026-10-05)"},
-		// 01:30 UTC on the 6th is still 22:30 on the 5th in loc.
-		{"zone decides the day", time.Date(2026, 10, 6, 1, 30, 0, 0, time.UTC), brt, ""},
-		{"same instant, UTC day", time.Date(2026, 10, 6, 1, 30, 0, 0, time.UTC), time.UTC, "not today's brief (2026-10-05)"},
-		{"nil zone reads as UTC", time.Date(2026, 10, 6, 1, 30, 0, 0, time.UTC), nil, "not today's brief (2026-10-05)"},
-		{"a brief from tomorrow is not today's", time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC), time.UTC, "not today's brief (2026-10-05)"},
+		// A bare date.
+		{"date, its own day", "2026-10-05", true, time.Date(2026, 10, 5, 23, 30, 0, 0, brt), brt, ""},
+		{"date, after midnight", "2026-10-05", true, time.Date(2026, 10, 6, 0, 30, 0, 0, brt), brt, "not today's brief (2026-10-05)"},
+		{"date, zone decides the day", "2026-10-05", true, time.Date(2026, 10, 6, 1, 30, 0, 0, time.UTC), brt, ""},
+		{"date, same instant in UTC", "2026-10-05", true, time.Date(2026, 10, 6, 1, 30, 0, 0, time.UTC), time.UTC, "not today's brief (2026-10-05)"},
+		{"date, nil zone reads as UTC", "2026-10-05", true, time.Date(2026, 10, 6, 1, 30, 0, 0, time.UTC), nil, "not today's brief (2026-10-05)"},
+		{"date, a brief dated after now", "2026-10-05", true, time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC), time.UTC, "not today's brief (2026-10-05)"},
+		// The gateway's timestamp, with microseconds and an offset.
+		{"stamp, same local day", stamp, true, time.Date(2026, 10, 5, 23, 30, 0, 0, brt), brt, ""},
+		{"stamp, after local midnight", stamp, true, time.Date(2026, 10, 6, 0, 30, 0, 0, brt), brt, "not today's brief (2026-10-05)"},
+		{"stamp, no fraction", "2026-10-05T07:00:12-03:00", true, time.Date(2026, 10, 6, 0, 30, 0, 0, brt), brt, "not today's brief (2026-10-05)"},
+		{"stamp, Z", "2026-10-05T10:00:12Z", true, time.Date(2026, 10, 5, 23, 30, 0, 0, brt), brt, ""},
+		// 23:30 -03:00 on the 6th is the 7th in UTC: the day is read in loc.
+		{"stamp, local day differs from UTC day", "2026-10-06T23:30:00-03:00", true, time.Date(2026, 10, 6, 23, 45, 0, 0, brt), brt, ""},
+		{"stamp, same instants read in UTC", "2026-10-06T23:30:00-03:00", true, time.Date(2026, 10, 7, 2, 45, 0, 0, time.UTC), time.UTC, ""},
+		{"stamp, next UTC day reads yesterday in loc", "2026-10-06T23:30:00-03:00", true, time.Date(2026, 10, 7, 3, 0, 0, 0, time.UTC), brt, "not today's brief (2026-10-06)"},
+		{"stamp, warning date is in loc", "2026-10-06T23:30:00-03:00", true, time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC), time.UTC, "not today's brief (2026-10-07)"},
+		// The date outranks a stale flag, both ways.
+		{"stamp today, flag says not", stamp, false, time.Date(2026, 10, 5, 12, 0, 0, 0, brt), brt, ""},
+		{"date today, flag says not", "2026-10-05", false, time.Date(2026, 10, 5, 12, 0, 0, 0, brt), brt, ""},
+		{"stamp old, flag says today", stamp, true, time.Date(2026, 10, 6, 12, 0, 0, 0, brt), brt, "not today's brief (2026-10-05)"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			raw := fmt.Sprintf(`{"brief":{"created":%q,"is_today":%t,"sections":[]}}`, c.created, c.isToday)
 			b, err := BriefSource{}.Build([]byte(raw), c.now, c.loc)
 			if err != nil || b.Warning != c.want {
 				t.Fatalf("Warning = %q, %v; want %q", b.Warning, err, c.want)
