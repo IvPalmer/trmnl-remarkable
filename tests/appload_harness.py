@@ -164,7 +164,9 @@ def main():
                 send(conn, MSG_NEXT)
                 image, seen = wait_for(conn, MSG_IMAGE)
                 image_path = Path(image["path"].removeprefix("file://"))
-                assert image_path.is_file() and image_path.stat().st_size > 1000
+                assert image_path.is_file()
+                image_bytes = image_path.stat().st_size  # Clear cache deletes the image later
+                assert image_bytes > 1000
                 assert image_path.suffix == ".png"
                 cfg_path = home / ".config/trmnl-remarkable/config.json"
                 assert cfg_path.stat().st_mode & 0o777 == 0o600
@@ -202,7 +204,7 @@ def main():
                 send(conn, SYSTEM_TERMINATE)
                 proc.wait(timeout=10)
                 assert proc.returncode == 0
-                print(json.dumps({"ok": True, "image": str(image_path), "bytes": image_path.stat().st_size, "messages_seen": len(seen)}))
+                print(json.dumps({"ok": True, "image": str(image_path), "bytes": image_bytes, "messages_seen": len(seen)}))
             finally:
                 conn.close()
                 if proc.poll() is None:
