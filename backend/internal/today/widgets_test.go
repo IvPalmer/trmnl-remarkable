@@ -2,9 +2,12 @@ package today
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -313,4 +316,171 @@ func TestSparkScaling(t *testing.T) {
 			t.Errorf("number(%v) = %q, want %q", v, got, want)
 		}
 	}
+}
+
+func refsOf(t *testing.T) (water, bank ItemRef) {
+	t.Helper()
+	b := buildScreen(t, screenJSON)
+	return b.Refs["demo.tasks t:41"], b.Refs["demo.tasks t:42"]
+}
+
+func TestAnActionPostsTheKeyAndTheScreen(t *testing.T) {
+	water, _ := refsOf(t)
+	c := &fakeClient{post: func(string, any) (string, error) {
+		return `{"ok":true,"message":"Ticked","refresh":true,"outcome":"done"}`, nil
+	}}
+	res, err := WidgetsSource{}.Act(context.Background(), c, "tick", water, nil)
+	if err != nil || !res.Refetch || res.Message != "Ticked" || res.Raw != nil {
+		t.Fatalf("Act = %+v, %v", res, err)
+	}
+	if len(c.posts) != 1 || c.posts[0].path != "/widgets/demo.tasks/actions/tick" ||
+		c.posts[0].body != `{"key":"t:41","screen":"tablet"}` {
+		t.Fatalf("posts = %+v", c.posts)
+	}
+	c.post = func(string, any) (string, error) { return `{"ok":true,"refresh":false,"outcome":"done"}`, nil }
+	if res, err := (WidgetsSource{}).Act(context.Background(), c, "tick", water, nil); err != nil || res.Refetch || res.Message != "Done" {
+		t.Fatalf("quiet done = %+v, %v", res, err)
+	}
+}
+
+func TestAnActionTheItemDoesNotOfferIsNeverSent(t *testing.T) {
+	water, _ := refsOf(t)
+	c := &fakeClient{post: func(string, any) (string, error) { return `{"ok":true}`, nil }}
+	for _, action := range []string{"purge", "snooze", "archive"} {
+		if _, err := (WidgetsSource{}).Act(context.Background(), c, action, water, nil); err == nil ||
+			err.Error() != "this item doesn't offer that action" {
+			t.Fatalf("%s: err = %v", action, err)
+		}
+	}
+	if len(c.posts) != 0 {
+		t.Fatalf("sent %d requests", len(c.posts))
+	}
+}
+
+func TestActionOutcomes(t *testing.T) {
+	water, _ := refsOf(t)
+	for _, tc := range []struct {
+		name    string
+		err     error
+		body    string
+		refetch bool
+		want    string
+	}{
+		{"refused", &HTTPError{Status: 409, Message: "no suggested transaction", Outcome: "refused"}, "", true, "no suggested transaction"},
+		{"item gone", &HTTPError{Status: 409, Message: "item gone — refresh", Outcome: "refused"}, "", true, "item gone — refresh"},
+		{"refused, no reason", &HTTPError{Status: 409}, "", true, "The app refused this"},
+		{"200 but not ok", nil, `{"ok":false,"message":"nothing to do","outcome":"refused"}`, true, "nothing to do"},
+		{"denied by the layout", &HTTPError{Status: 403, Message: "not on this screen", Outcome: "denied"}, "", false, "not on this screen"},
+		// The gate answers a widget action in the action's own shape, so its
+		// refusal carries outcome "denied" too; it keeps the default wording.
+		{"refused by the gate", &HTTPError{Status: 403, Message: "peer not allowed", Outcome: "denied"}, "", false,
+			"The Mac doesn't recognise this tablet yet. Try again in a minute."},
+		{"refused without an outcome", &HTTPError{Status: 403, Message: "service-peer-route"}, "", false, "Tablet not authorised. Run rm-today-setup."},
+		{"unknown action", &HTTPError{Status: 404, Message: "unknown action", Outcome: "denied"}, "", true, "unknown action"},
+		{"the app timed out", &HTTPError{Status: 504, Message: "Unknown — check in Demo", Outcome: "unknown"}, "", false, "Unknown — check in Demo"},
+		{"the proxy gave up", &HTTPError{Status: 502}, "", false, "Unknown — check Tasks in its app"},
+		{"the tablet timed out", context.DeadlineExceeded, "", false, "Unknown — check Tasks in its app"},
+		{"tailscale down", fmt.Errorf("%w (refused)", ErrTailscaleDown), "", false, "Tailscale isn't running on the tablet"},
+		{"token refused", &HTTPError{Status: 401, Message: "bad token"}, "", false, "Tablet not authorised. Run rm-today-setup."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &fakeClient{post: func(string, any) (string, error) { return tc.body, tc.err }}
+			res, err := WidgetsSource{}.Act(context.Background(), c, "tick", water, nil)
+			if err == nil || UserMessage(err) != tc.want || res.Refetch != tc.refetch {
+				t.Fatalf("Act = %+v, %v (%q); want refetch %v, %q", res, err, UserMessage(err), tc.refetch, tc.want)
+			}
+			if len(c.posts) != 1 {
+				t.Fatalf("sent %d requests, want exactly 1", len(c.posts))
+			}
+		})
+	}
+}
+
+// screenServer serves one screen, counts fetches and answers actions.
+type screenServer struct {
+	body  atomic.Value // string
+	gets  atomic.Int32
+	posts atomic.Int32
+	post  func() (string, error)
+}
+
+func (s *screenServer) Get(_ context.Context, path string, out any) error {
+	s.gets.Add(1)
+	if path != "/screens/tablet" {
+		return &HTTPError{Status: 404, Message: "no route"}
+	}
+	return json.Unmarshal([]byte(s.body.Load().(string)), out)
+}
+
+func (s *screenServer) Post(_ context.Context, _ string, _, out any) error {
+	s.posts.Add(1)
+	answer, err := s.post()
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal([]byte(answer), out)
+}
+
+func widgetsEngine(t *testing.T, srv *screenServer) (*Engine, *recorder) {
+	t.Helper()
+	rec := newRecorder()
+	return New(context.Background(), srv, []Source{WidgetsSource{}}, spLoc(t),
+		filepath.Join(t.TempDir(), "today.json"), rec.emit, func() time.Time { return widgetsNow }), rec
+}
+
+func TestADoneActionRefetchesTheScreenOnce(t *testing.T) {
+	srv := &screenServer{}
+	srv.body.Store(screenJSON)
+	srv.post = func() (string, error) {
+		srv.body.Store(strings.Replace(screenJSON, waterItem, "", 1))
+		return `{"ok":true,"message":"Done","refresh":true,"outcome":"done"}`, nil
+	}
+	e, rec := widgetsEngine(t, srv)
+	e.Refresh()
+	sec := find(rec.snapshot(t), "widgets")
+	if sec.Status != "ok" || sec.Screen == nil || titlesOfCell(sec.Screen.Cells[0]) != "Water the plants,Call the bank" {
+		t.Fatalf("before = %+v", sec)
+	}
+	e.Act("widgets", sec.Rev, "tick", "demo.tasks t:41")
+	if r := rec.result(t); !r.OK || r.Message != "Done" {
+		t.Fatalf("result = %+v", r)
+	}
+	rec.snapshot(t) // the state after the action
+	after := find(rec.snapshot(t), "widgets")
+	if titlesOfCell(after.Screen.Cells[0]) != "Call the bank" || after.Rev == sec.Rev {
+		t.Fatalf("after = %+v", after.Screen.Cells[0])
+	}
+	if srv.gets.Load() != 2 || srv.posts.Load() != 1 {
+		t.Fatalf("gets %d posts %d, want 2 and 1", srv.gets.Load(), srv.posts.Load())
+	}
+}
+
+func TestAnUnknownOutcomeIsNeverRetriedOrRefetched(t *testing.T) {
+	srv := &screenServer{}
+	srv.body.Store(screenJSON)
+	srv.post = func() (string, error) {
+		return "", &HTTPError{Status: 504, Message: "Unknown — check in Demo", Outcome: "unknown"}
+	}
+	e, rec := widgetsEngine(t, srv)
+	e.Refresh()
+	sec := find(rec.snapshot(t), "widgets")
+	e.Act("widgets", sec.Rev, "tick", "demo.tasks t:41")
+	if r := rec.result(t); r.OK || r.Message != "Unknown — check in Demo" {
+		t.Fatalf("result = %+v", r)
+	}
+	rec.snapshot(t)
+	time.Sleep(50 * time.Millisecond)
+	if srv.gets.Load() != 1 || srv.posts.Load() != 1 {
+		t.Fatalf("gets %d posts %d, want 1 and 1", srv.gets.Load(), srv.posts.Load())
+	}
+}
+
+func titlesOfCell(c Cell) string {
+	var out []string
+	for _, g := range c.Groups {
+		for _, it := range g.Items {
+			out = append(out, it.Title)
+		}
+	}
+	return strings.Join(out, ",")
 }

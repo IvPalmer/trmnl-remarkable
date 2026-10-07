@@ -3,8 +3,11 @@ package today
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
+	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -370,6 +373,69 @@ func closeRows(cells []Cell) int {
 	return n
 }
 
-func (WidgetsSource) Act(context.Context, Client, string, ItemRef, json.RawMessage) (ActResult, error) {
-	return ActResult{}, ErrNoActions // Task 4
+// Act runs one action through the gateway, which checks it against the
+// tablet's grant, its layout and the action's risk before the app sees it.
+// The answer carries no data: an action that changed something asks for one
+// refetch. Nothing is ever sent twice.
+func (WidgetsSource) Act(ctx context.Context, c Client, action string, ref ItemRef, _ json.RawMessage) (ActResult, error) {
+	if !offers(ref["actions"], action) {
+		return ActResult{}, errors.New("this item doesn't offer that action")
+	}
+	var resp struct {
+		OK      bool   `json:"ok"`
+		Message string `json:"message"`
+		Refresh bool   `json:"refresh"`
+	}
+	path := "/widgets/" + url.PathEscape(ref["widget"]) + "/actions/" + url.PathEscape(action)
+	if err := c.Post(ctx, path, map[string]string{"key": ref["key"], "screen": screenName}, &resp); err != nil {
+		return actFailed(err, ref["title"])
+	}
+	if !resp.OK {
+		return ActResult{Refetch: true}, errors.New(orElse(resp.Message, "The app refused this"))
+	}
+	return ActResult{Refetch: resp.Refresh, Message: orElse(resp.Message, "Done")}, nil
+}
+
+// actFailed words a failed action (spec Appendix A3). A refusal (409) or an
+// unknown widget or action (404) means the screen is stale: one refetch. A
+// denial (403 with outcome "denied") is said as the gateway says it, except
+// the gate's own "peer not allowed", which answers in the action's shape too
+// and keeps UserMessage's wording. A timeout or a dropped connection is
+// "unknown": the action may have run, so nothing is retried or refetched. The
+// tablet's own problems (Tailscale, its token) keep UserMessage's wording.
+func actFailed(err error, title string) (ActResult, error) {
+	unknown := "Unknown — check " + title + " in its app"
+	var he *HTTPError
+	switch {
+	case errors.Is(err, ErrTailscaleDown):
+		return ActResult{}, err // refused before it left the tablet
+	case !errors.As(err, &he):
+		return ActResult{}, errors.New(unknown)
+	case he.Status == http.StatusConflict:
+		return ActResult{Refetch: true}, errors.New(orElse(he.Message, "The app refused this"))
+	case he.Status == http.StatusNotFound:
+		return ActResult{Refetch: true}, errors.New(orElse(he.Message, "This action is no longer offered"))
+	case he.Status == http.StatusForbidden && he.Outcome == "denied" && he.Message != "peer not allowed":
+		return ActResult{}, errors.New(orElse(he.Message, "Not allowed from this tablet"))
+	case he.Status >= 502 && he.Status <= 504:
+		return ActResult{}, errors.New(orElse(he.Message, unknown))
+	default:
+		return ActResult{}, err
+	}
+}
+
+func offers(ids, action string) bool {
+	for _, id := range strings.Fields(ids) {
+		if id == action {
+			return true
+		}
+	}
+	return false
+}
+
+func orElse(s, fallback string) string {
+	if s == "" {
+		return fallback
+	}
+	return s
 }
