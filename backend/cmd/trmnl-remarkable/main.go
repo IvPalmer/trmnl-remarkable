@@ -108,6 +108,7 @@ type app struct {
 	brightnessScheduleChanged        chan struct{}
 	today                            *today.Engine
 	todayProblem                     string
+	todayCache                       string // set whether or not Today is on
 }
 
 func main() {
@@ -202,6 +203,7 @@ func main() {
 	go a.brightnessScheduler()
 	go a.batterySampler()
 	go a.updateWatcher()
+	a.todayCache = todayCachePath(home)
 	a.today, a.todayProblem = openToday(ctx, home, a.send)
 	if e, ok := a.cache.Latest(); ok && cfg.StartWithCacheOffline {
 		a.sendImage(e, true)
@@ -250,8 +252,70 @@ func openToday(ctx context.Context, home string, emit today.Emitter) (*today.Eng
 	for _, u := range unknown {
 		log.Printf("today: unknown section %q ignored", u)
 	}
-	cachePath := filepath.Join(home, ".cache", "trmnl-remarkable", "today.json")
-	return today.New(ctx, gw, sources, cfg.Location(), cachePath, emit, time.Now), ""
+	if len(sources) == 0 {
+		return nil, "today.json: no known sections"
+	}
+	return today.New(ctx, gw, sources, cfg.Location(), todayCachePath(home), emit, time.Now), ""
+}
+
+// todayCachePath is where Today keeps its last good data, wherever it is set up.
+func todayCachePath(home string) string {
+	return filepath.Join(home, ".cache", "trmnl-remarkable", "today.json")
+}
+
+// clearToday forgets Today's cached data (mail subjects, snippets, due items).
+// With Today on, the engine does it and also drops work already in flight.
+// Without it (no today.json, or one that cannot be used) the file an earlier
+// setup left behind is deleted here, so it cannot reappear when Today is set
+// up again. An interrupted save's temp file is removed here too; with the
+// engine on none can exist, because saves happen under its lock and startup
+// has already cleaned up after a crash.
+func (a *app) clearToday() {
+	if a.today != nil {
+		a.today.ClearCache()
+		return
+	}
+	if a.todayCache == "" {
+		return
+	}
+	temps, _ := filepath.Glob(filepath.Join(filepath.Dir(a.todayCache), ".today-*"))
+	for _, path := range append(temps, a.todayCache) {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			log.Printf("today: cache not removed: %v", err)
+		}
+	}
+}
+
+// todayAct handles message 19. It returns the message 110 to send when the
+// request cannot go to the engine, and "" once it has.
+func (a *app) todayAct(contents string) string {
+	var v struct {
+		Section string `json:"section"`
+		Rev     uint64 `json:"rev"`
+		Action  string `json:"action"`
+		Key     string `json:"key"`
+	}
+	err := json.Unmarshal([]byte(contents), &v)
+	refuse := func(message string) string {
+		// Whatever decoded is echoed, so the view can tell which action failed.
+		return mustJSON(struct {
+			OK      bool   `json:"ok"`
+			Section string `json:"section"`
+			Action  string `json:"action"`
+			Key     string `json:"key"`
+			Message string `json:"message"`
+		}{false, v.Section, v.Action, v.Key, message})
+	}
+	switch {
+	case a.today == nil && a.todayProblem != "":
+		return refuse(a.todayProblem)
+	case a.today == nil:
+		return refuse("Today is not set up")
+	case err != nil:
+		return refuse("bad action request")
+	}
+	a.today.Act(v.Section, v.Rev, v.Action, v.Key)
+	return ""
 }
 
 func (a *app) handle(m protocol.Message) {
@@ -324,25 +388,12 @@ func (a *app) handle(m protocol.Message) {
 		}
 		a.today.Refresh()
 	case msgTodayAct:
-		var v struct {
-			Section string `json:"section"`
-			Rev     uint64 `json:"rev"`
-			Action  string `json:"action"`
-			Key     string `json:"key"`
-		}
-		switch {
-		case a.today == nil:
-			a.send(today.MsgActResult, `{"ok":false,"message":"Today is not set up"}`)
-		case json.Unmarshal([]byte(m.Contents), &v) != nil:
-			a.send(today.MsgActResult, `{"ok":false,"message":"bad action request"}`)
-		default:
-			a.today.Act(v.Section, v.Rev, v.Action, v.Key)
+		if reply := a.todayAct(m.Contents); reply != "" {
+			a.send(today.MsgActResult, reply)
 		}
 	case msgClearCache:
 		_ = a.cache.Clear()
-		if a.today != nil {
-			a.today.ClearCache()
-		}
+		a.clearToday()
 		a.sendStatus("Cache cleared")
 	case msgDiagnostics:
 		a.send(msgDiagnosticsResult, a.diagnostics())
@@ -1369,7 +1420,7 @@ func rotateLog(path string, max int64) {
 func cleanupTemps(dirs ...string) {
 	// Inverted renders are regenerated on demand, so nothing carries over a
 	// restart; dropping them reclaims space when inversion is turned off.
-	patterns := []string{".download-*.tmp", ".index-*.tmp", ".config-*.tmp", ".invert-*.tmp", ".tmp-*", "inverted.png", "inverted-*.png"}
+	patterns := []string{".download-*.tmp", ".index-*.tmp", ".config-*.tmp", ".invert-*.tmp", ".tmp-*", ".today-*", "inverted.png", "inverted-*.png"}
 	for _, dir := range dirs {
 		for _, pattern := range patterns {
 			matches, _ := filepath.Glob(filepath.Join(dir, pattern))

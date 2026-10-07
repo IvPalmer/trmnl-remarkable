@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 MSG_INIT = 1
 MSG_SAVE = 2
 MSG_NEXT = 5
+MSG_CLEAR_CACHE = 7
 MSG_STATE = 101
 MSG_IMAGE = 102
 MSG_STATUS = 103
@@ -102,15 +103,16 @@ class FakeGateway(BaseHTTPRequestHandler):
         pass
 
 
-def wait_until(conn, expected, pred, timeout=30):
+def wait_until(conn, expected, pred, log, timeout=30):
+    """Receive until a message of kind `expected` satisfies `pred`. Every
+    message received, matched or not, is appended to `log`."""
     deadline = time.monotonic() + timeout
-    seen = []
     while time.monotonic() < deadline:
         kind, payload = receive(conn, max(1, deadline - time.monotonic()))
-        seen.append((kind, payload))
+        log.append((kind, payload))
         if kind == expected and pred(payload):
             return payload
-    raise TimeoutError(f"message {expected} not matched; saw {seen}")
+    raise TimeoutError(f"message {expected} not matched; saw {log}")
 
 
 def main():
@@ -126,10 +128,12 @@ def main():
         token = cfgdir / "today.token"
         token.write_text("harness-token\n")
         token.chmod(0o600)
-        (cfgdir / "today.json").write_text(json.dumps({
+        today_json = cfgdir / "today.json"
+        today_json.write_text(json.dumps({
             "gateway_url": "http://mac.test:8090", "proxy": "http://127.0.0.1:19989",
             "token_file": str(token), "timezone": "America/Sao_Paulo",
             "sections": ["brief", "due", "mail"]}))
+        today_json.chmod(0o600)
         gateway = ThreadingHTTPServer(("127.0.0.1", 19989), FakeGateway)
         threading.Thread(target=gateway.serve_forever, daemon=True).start()
         sock_path = str(root / "appload.sock")
@@ -166,8 +170,9 @@ def main():
                 assert cfg_path.stat().st_mode & 0o777 == 0o600
                 saved = json.loads(cfg_path.read_text())
                 assert saved["api_key"] == "local-test"
-                send(conn, MSG_TODAY)
-                today = wait_until(conn, MSG_TODAY_STATE, lambda p: p.get("refreshing") is False)
+                log = []  # every message from here on, for the leak check
+                send(conn, MSG_TODAY, "{}")
+                today = wait_until(conn, MSG_TODAY_STATE, lambda p: p.get("refreshing") is False, log)
                 assert today["configured"] is True, today
                 assert [s["id"] for s in today["sections"]] == ["brief", "due", "mail"], today
                 due = next(s for s in today["sections"] if s["id"] == "due")
@@ -176,13 +181,23 @@ def main():
                 assert item["title"] == "Pagar IPTU 2026-01-01" and "file" not in item, item
                 send(conn, MSG_TODAY_ACT, json.dumps({"section": "due", "rev": due["rev"],
                                                       "action": "tick", "key": item["key"]}))
-                result = wait_until(conn, MSG_TODAY_RESULT, lambda p: True)
+                result = wait_until(conn, MSG_TODAY_RESULT, lambda p: True, log)
                 assert result["ok"] is True, result
-                after = wait_until(conn, MSG_TODAY_STATE, lambda p: p.get("refreshing") is False)
+                after = wait_until(conn, MSG_TODAY_STATE, lambda p: p.get("refreshing") is False, log)
                 due_after = next(s for s in after["sections"] if s["id"] == "due")
                 assert due_after["groups"] == [], due_after
                 cache = home / ".cache/trmnl-remarkable/today.json"
                 assert cache.stat().st_mode & 0o777 == 0o600
+                # Clear cache forgets Today's data too, in memory and on disk.
+                send(conn, MSG_CLEAR_CACHE)
+                cleared = wait_until(conn, MSG_TODAY_STATE, lambda p: all(
+                    s["status"] == "none" for s in p["sections"]) and p.get("refreshing") is False, log)
+                assert [s["id"] for s in cleared["sections"]] == ["brief", "due", "mail"], cleared
+                assert not cache.exists()
+                wait_until(conn, MSG_STATUS, lambda p: p.get("message") == "Cache cleared", log)
+                # The token reaches neither the QML nor the log.
+                leaked = [(k, p) for k, p in log if "harness-token" in json.dumps(p)]
+                assert not leaked, leaked
                 assert "harness-token" not in (home / ".local/share/trmnl-remarkable/trmnl.log").read_text()
                 send(conn, SYSTEM_TERMINATE)
                 proc.wait(timeout=10)

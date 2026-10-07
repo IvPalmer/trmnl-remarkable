@@ -16,6 +16,7 @@ import (
 
 	"time"
 	"trmnl-remarkable/backend/internal/config"
+	"trmnl-remarkable/backend/internal/today"
 )
 
 func TestReadBatteryPercentPrefersSystemBattery(t *testing.T) {
@@ -314,5 +315,209 @@ func TestOpenTodayReportsABadConfigWithoutTheToken(t *testing.T) {
 	e, problem := openToday(context.Background(), home, func(uint32, string) {})
 	if e != nil || problem == "" || strings.Contains(problem, "secret") {
 		t.Fatalf("openToday = %v, %q", e, problem)
+	}
+}
+
+// writeTodayConfig makes a usable Today setup under home and returns the
+// token file's path. extra overrides or adds today.json fields.
+func writeTodayConfig(t *testing.T, home string, extra map[string]any) string {
+	t.Helper()
+	dir := filepath.Join(home, ".config", "trmnl-remarkable")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	tok := filepath.Join(dir, "today.token")
+	if err := os.WriteFile(tok, []byte("test-token\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fields := map[string]any{
+		"gateway_url": "http://mac.test:8090",
+		"proxy":       "http://127.0.0.1:1",
+		"token_file":  tok,
+		"timezone":    "America/Sao_Paulo",
+	}
+	for k, v := range extra {
+		fields[k] = v
+	}
+	cfg, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "today.json"), cfg, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return tok
+}
+
+func TestOpenTodayNeedsAKnownSection(t *testing.T) {
+	home := t.TempDir()
+	writeTodayConfig(t, home, map[string]any{"sections": []string{"nonsense"}})
+	e, problem := openToday(context.Background(), home, func(uint32, string) {})
+	if e != nil || problem != "today.json: no known sections" {
+		t.Fatalf("openToday = %v, %q", e, problem)
+	}
+}
+
+func TestOpenTodayKeepsTheKnownSectionsAmongUnknownOnes(t *testing.T) {
+	home := t.TempDir()
+	writeTodayConfig(t, home, map[string]any{"sections": []string{"nonsense", "due"}})
+	e, problem := openToday(context.Background(), home, func(uint32, string) {})
+	if e == nil || problem != "" {
+		t.Fatalf("openToday = %v, %q", e, problem)
+	}
+	if got := e.Current().Sections; len(got) != 1 || got[0].ID != "due" {
+		t.Fatalf("sections = %+v", got)
+	}
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func TestClearCacheRemovesTodaysCacheWhileTodayIsOff(t *testing.T) {
+	home := t.TempDir()
+	cacheDir := filepath.Join(home, ".cache", "trmnl-remarkable")
+	a := &app{todayCache: todayCachePath(home)}
+	writeFile(t, a.todayCache, `{"version":1}`)
+	writeFile(t, filepath.Join(cacheDir, ".today-1234"), "interrupted save")
+	writeFile(t, filepath.Join(cacheDir, "index.json"), "[]")
+	a.clearToday()
+	if exists(a.todayCache) || exists(filepath.Join(cacheDir, ".today-1234")) {
+		t.Fatal("Today's cache survived Clear cache")
+	}
+	if !exists(filepath.Join(cacheDir, "index.json")) {
+		t.Fatal("Clear cache for Today removed a file that is not Today's")
+	}
+	a.clearToday() // nothing left: still fine
+}
+
+func TestClearCacheRemovesTodaysCacheWhenTodayIsBroken(t *testing.T) {
+	home := t.TempDir()
+	writeTodayConfig(t, home, map[string]any{"proxy": ""})
+	e, problem := openToday(context.Background(), home, func(uint32, string) {})
+	if e != nil || problem == "" {
+		t.Fatalf("openToday = %v, %q", e, problem)
+	}
+	a := &app{today: e, todayProblem: problem, todayCache: todayCachePath(home)}
+	writeFile(t, a.todayCache, `{"version":1}`)
+	a.clearToday()
+	if exists(a.todayCache) {
+		t.Fatal("Today's cache survived Clear cache")
+	}
+}
+
+func TestClearCacheGoesThroughTheEngineWhileTodayIsOn(t *testing.T) {
+	home := t.TempDir()
+	writeTodayConfig(t, home, nil)
+	var snapshots int
+	e, problem := openToday(context.Background(), home, func(typ uint32, _ string) {
+		if typ == today.MsgToday {
+			snapshots++
+		}
+	})
+	if e == nil {
+		t.Fatalf("openToday: %q", problem)
+	}
+	a := &app{today: e, todayCache: todayCachePath(home)}
+	writeFile(t, a.todayCache, `{"version":1}`)
+	a.clearToday()
+	if exists(a.todayCache) || snapshots != 1 {
+		t.Fatalf("cache present = %t, snapshots = %d", exists(a.todayCache), snapshots)
+	}
+}
+
+func TestCleanupTempsRemovesAnInterruptedTodaySave(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".today-98765"), "half a cache")
+	writeFile(t, filepath.Join(dir, "today.json"), `{"version":1}`)
+	cleanupTemps(dir)
+	if exists(filepath.Join(dir, ".today-98765")) {
+		t.Fatal("the interrupted save's temp file survived")
+	}
+	if !exists(filepath.Join(dir, "today.json")) {
+		t.Fatal("cleanupTemps removed the cache itself")
+	}
+}
+
+// decodeRefusal reads a message 110 and fails unless it has the whole field set.
+func decodeRefusal(t *testing.T, reply string) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal([]byte(reply), &m); err != nil {
+		t.Fatalf("reply %q: %v", reply, err)
+	}
+	for _, k := range []string{"ok", "section", "action", "key", "message"} {
+		if _, ok := m[k]; !ok {
+			t.Fatalf("reply %q has no %q", reply, k)
+		}
+	}
+	if m["ok"] != false {
+		t.Fatalf("reply %q is not a refusal", reply)
+	}
+	return m
+}
+
+func TestTodayActRefusalsCarryTheWholeReply(t *testing.T) {
+	request := `{"section":"due","rev":1790000000000,"action":"tick","key":"due:casa.md#0"}`
+	off := &app{}
+	m := decodeRefusal(t, off.todayAct(request))
+	if m["section"] != "due" || m["action"] != "tick" || m["key"] != "due:casa.md#0" || m["message"] != "Today is not set up" {
+		t.Fatalf("off: %v", m)
+	}
+	broken := &app{todayProblem: "today.json: proxy is required"}
+	m = decodeRefusal(t, broken.todayAct(request))
+	if m["message"] != "today.json: proxy is required" || m["section"] != "due" {
+		t.Fatalf("broken: %v", m)
+	}
+	m = decodeRefusal(t, off.todayAct("{"))
+	if m["section"] != "" || m["action"] != "" || m["key"] != "" || m["message"] != "Today is not set up" {
+		t.Fatalf("off, unreadable: %v", m)
+	}
+
+	home := t.TempDir()
+	writeTodayConfig(t, home, nil)
+	e, problem := openToday(context.Background(), home, func(uint32, string) {})
+	if e == nil {
+		t.Fatalf("openToday: %q", problem)
+	}
+	on := &app{today: e}
+	m = decodeRefusal(t, on.todayAct("not json"))
+	if m["section"] != "" || m["message"] != "bad action request" {
+		t.Fatalf("on, unreadable: %v", m)
+	}
+	// A field of the wrong type fails the decode; what did decode is echoed.
+	m = decodeRefusal(t, on.todayAct(`{"section":"due","rev":"x","action":"tick","key":"k"}`))
+	if m["section"] != "due" || m["key"] != "k" || m["message"] != "bad action request" {
+		t.Fatalf("on, bad rev: %v", m)
+	}
+}
+
+func TestTodayActPassesAGoodRequestToTheEngine(t *testing.T) {
+	home := t.TempDir()
+	writeTodayConfig(t, home, nil)
+	var typ uint32
+	var payload string
+	e, problem := openToday(context.Background(), home, func(t uint32, p string) { typ, payload = t, p })
+	if e == nil {
+		t.Fatalf("openToday: %q", problem)
+	}
+	a := &app{today: e}
+	if reply := a.todayAct(`{"section":"nope","rev":1,"action":"tick","key":"k"}`); reply != "" {
+		t.Fatalf("a good request was refused: %s", reply)
+	}
+	// The engine itself refused (no such section) and said so in message 110.
+	if typ != today.MsgActResult || decodeRefusal(t, payload)["message"] != "unknown section" {
+		t.Fatalf("engine got %d %s", typ, payload)
 	}
 }
