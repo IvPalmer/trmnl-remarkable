@@ -1,5 +1,6 @@
 <RCC>
   <qresource>
     <file>ui/TRMNL.qml</file>
+    <file>ui/TodayView.qml</file>
   </qresource>
 </RCC>

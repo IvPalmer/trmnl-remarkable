@@ -25,6 +25,7 @@ Rectangle {
     property bool controlsVisible: false
     property bool settingsVisible: false
     property bool brightnessScheduleVisible: false
+    property bool todayVisible: false   // remarkable-ai
     property bool apiKeyConfigured: false
     property bool initialized: false
     // The reMarkable 1 and 2 have no front light, so those controls are hidden
@@ -178,6 +179,7 @@ Rectangle {
         if (show) loadBrightnessSchedule()
         brightnessScheduleVisible = show
         controlsVisible = false
+        todayVisible = false   // remarkable-ai
         settingsVisible = false
         cleanScreen()
     }
@@ -261,7 +263,7 @@ Rectangle {
     function showControls(show) {
         dismissKeyboard()
         controlsVisible = show
-        if (show) { settingsVisible = false; brightnessScheduleVisible = false }
+        if (show) { settingsVisible = false; brightnessScheduleVisible = false; todayVisible = false }   // remarkable-ai: Today too
         cleanScreen()
     }
     function showSettings(show) {
@@ -269,7 +271,21 @@ Rectangle {
         if (show) configureFields()
         settingsVisible = show
         controlsVisible = false
+        todayVisible = false   // remarkable-ai
         brightnessScheduleVisible = false
+        cleanScreen()
+    }
+    // remarkable-ai: the Today view (TodayView.qml). Opening it asks the
+    // backend for what it knows now and a refresh (message 18).
+    function showToday(show) {
+        dismissKeyboard()
+        todayVisible = show
+        if (show) {
+            controlsVisible = false
+            settingsVisible = false
+            brightnessScheduleVisible = false
+            endpoint.sendMessage(18, "{}")
+        }
         cleanScreen()
     }
     Timer { id: scheduleRefreshDelay; interval: 320; onTriggered: root.cleanScreen() }
@@ -318,6 +334,8 @@ Rectangle {
             else if (type === 106) { testResult.text = data.message || ""; testResult.color = data.ok ? "#124e2c" : "#7a1515" }
             else if (type === 107) { diagnosticsText.text = JSON.stringify(data, null, 2) }
             else if (type === 108) { root.batteryTest = data; batteryChart.requestPaint() }
+            else if (type === 109) { todayView.apply(data) }   // remarkable-ai
+            else if (type === 110) { todayView.actionResult(data) }
         }
     }
 
@@ -331,6 +349,7 @@ Rectangle {
                 root.controlsVisible = false
                 root.settingsVisible = false
                 root.brightnessScheduleVisible = false
+                root.todayVisible = false   // remarkable-ai
                 diagnosticsPopup.close()
                 root.cleanScreen()
                 endpoint.sendMessage(10, "")
@@ -416,12 +435,31 @@ Rectangle {
         Timer { id: fallbackExit; interval: 2000; onTriggered: root.close() }
     }
 
+    // remarkable-ai: the Today view, oriented like the dashboard. It sits
+    // above the corner hotspots, so its own Dashboard button is the way back.
+    Item {
+        anchors.centerIn: parent
+        visible: root.todayVisible
+        width: root.appConfig.orientation === "landscape" ? root.height : root.width
+        height: root.appConfig.orientation === "landscape" ? root.width : root.height
+        rotation: root.appConfig.orientation === "landscape" ? 90 : 0
+        TodayView {
+            id: todayView
+            anchors.fill: parent
+            onRefreshRequested: endpoint.sendMessage(18, "{}")
+            onActionRequested: function(section, rev, action, key) {
+                endpoint.sendMessage(19, JSON.stringify({section: section, rev: rev, action: action, key: key}))
+            }
+            onCloseRequested: root.showToday(false)
+        }
+    }
+
     Rectangle {
         id: statusBadge
         // remarkable-ai: only when something is wrong. The routine "updated,
         // next refresh in …" line sat on the dashboard permanently; it is still
         // in the controls panel (top-right corner).
-        visible: root.offline && root.statusText !== "" && !root.controlsVisible && !root.settingsVisible
+        visible: root.offline && root.statusText !== "" && !root.controlsVisible && !root.settingsVisible && !root.todayVisible
         anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: 18
         width: Math.min(statusLabel.implicitWidth + 34, parent.width * 0.72); height: 54
         color: root.offline ? "#f1d8d0" : "#eceae3"; border.width: 2; radius: 8; opacity: 0.93
@@ -487,6 +525,7 @@ Rectangle {
                     spacing: 14
                     Button { text: "Settings"; width: 220; height: 78; font.pixelSize: 23; onClicked: root.showSettings(true) }
                     Button { text: "Diagnostics"; width: 220; height: 78; font.pixelSize: 23; onClicked: { root.cleanScreen(); endpoint.sendMessage(8, ""); diagnosticsPopup.open() } }
+                    Button { text: "Today"; width: 220; height: 78; font.pixelSize: 23; onClicked: root.showToday(true) }   // remarkable-ai
                 }
                 Button { text: "Return to reMarkable"; width: parent.width; height: 92; font.pixelSize: 27; font.bold: true; onClicked: root.close() }
                 Text { text: "Refresh history"; font.pixelSize: 28; font.bold: true }
