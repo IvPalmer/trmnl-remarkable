@@ -91,7 +91,8 @@ This page describes the code as it is. The tests are beside it, in
 - `backend/internal/today`:
   - `config.go`: `Config`, `LoadConfig`, `ReadToken`.
   - `gateway.go`: `Gateway`, the only HTTP client (the proxy, the bearer, a
-    15 s timeout, at most 4 MiB read, no redirects), `HTTPError` (status,
+    15 s timeout, at most 4 MiB read (16 MiB for the tablet screen), no
+    redirects), `HTTPError` (status,
     message, outcome), `ErrTailscaleDown` and `UserMessage`.
   - `sources.go`: the `Source` interface, the model sent to the view
     (`Section`, `Screen`, `Cell`, `Group`, `Item`, `Action` and the view
