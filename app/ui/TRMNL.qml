@@ -438,6 +438,7 @@ Rectangle {
     // remarkable-ai: the Today view, oriented like the dashboard. It sits
     // above the corner hotspots, so its own Dashboard button is the way back.
     Item {
+        z: 5 // above the corner hotspots whatever order siblings end up in (a merge may reorder)
         anchors.centerIn: parent
         visible: root.todayVisible
         width: root.appConfig.orientation === "landscape" ? root.height : root.width

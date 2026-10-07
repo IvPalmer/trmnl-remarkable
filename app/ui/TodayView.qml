@@ -82,11 +82,24 @@ Rectangle {
         }
         return text
     }
+    function anyHasData() {
+        for (var i = 0; i < view.sections.length; ++i)
+            if (view.hasData(view.sections[i])) return true
+        return false
+    }
+    // The plea to wake the Mac is said once, for the whole view. A section
+    // without data beside others that have some just says "offline".
+    function sectionError(s) {
+        var err = s.error || ""
+        if (err.indexOf("Can't reach the Mac") === 0 && !view.hasData(s) && view.anyHasData())
+            return "offline"
+        return err
+    }
     function sectionStatus(s) {
         if (s.status === "none") return s.error || "No data yet"
         var parts = []
         if (s.as_of) parts.push("as of " + s.as_of)
-        if (s.status === "error" && s.error) parts.push(s.error)
+        if (s.status === "error" && s.error) parts.push(view.sectionError(s))
         if (s.warning) parts.push(s.warning)
         return parts.join(" · ")
     }

@@ -345,6 +345,17 @@ func (e *Engine) saveLocked() {
 	}
 }
 
+// asOf words when data was fetched: the time alone for today's data, and
+// with the day for anything older, so a cache from last night never reads
+// as tonight's.
+func (e *Engine) asOf(fetchedAt time.Time) string {
+	at, now := fetchedAt.In(e.loc), e.now().In(e.loc)
+	if at.Format(dateLayout) == now.Format(dateLayout) {
+		return at.Format("15:04")
+	}
+	return at.Format("Mon 2 Jan 15:04")
+}
+
 func (e *Engine) snapshotLocked() Snapshot {
 	s := Snapshot{Configured: true, Refreshing: e.fetching, Sections: []Section{}}
 	for _, id := range e.order {
@@ -364,7 +375,7 @@ func (e *Engine) snapshotLocked() Snapshot {
 			sec.Status = "ok"
 		}
 		if !st.fetchedAt.IsZero() {
-			sec.AsOf = st.fetchedAt.In(e.loc).Format("15:04")
+			sec.AsOf = e.asOf(st.fetchedAt)
 		}
 		s.Sections = append(s.Sections, sec)
 	}

@@ -50,6 +50,9 @@ func (MailSource) Build(raw json.RawMessage, _ time.Time, loc *time.Location) (B
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return Built{}, err
 	}
+	if loc == nil {
+		loc = time.UTC
+	}
 	var failed []string
 	for _, a := range s.Accounts {
 		if !a.OK {

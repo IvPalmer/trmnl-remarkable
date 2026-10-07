@@ -53,13 +53,11 @@ func NewGateway(cfg Config, token string) (*Gateway, error) {
 		return nil, err
 	}
 	tr := &http.Transport{MaxIdleConns: 4, IdleConnTimeout: 90 * time.Second}
-	if cfg.Proxy != "" {
-		p, err := url.Parse(cfg.Proxy)
-		if err != nil {
-			return nil, err
-		}
-		tr.Proxy = http.ProxyURL(p)
+	p, err := url.Parse(cfg.Proxy) // validate() requires one: never a direct connection
+	if err != nil {
+		return nil, err
 	}
+	tr.Proxy = http.ProxyURL(p)
 	return &Gateway{
 		base:  strings.TrimRight(cfg.GatewayURL, "/"),
 		token: token,

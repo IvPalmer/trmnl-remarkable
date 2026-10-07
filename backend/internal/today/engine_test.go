@@ -285,6 +285,42 @@ func TestAFailedFetchKeepsTheCachedData(t *testing.T) {
 	}
 }
 
+// Data from an earlier day says which day: after the Mac sleeps overnight,
+// "as of 23:50 · offline" would read as tonight. Zones are fixed, so the
+// test needs no tzdata; the local day, not UTC's, decides.
+func TestAsOfNamesTheDayForOlderData(t *testing.T) {
+	brt := time.FixedZone("BRT", -3*3600)
+	at := func(day, hour, min int) time.Time { return time.Date(2026, 10, day, hour, min, 0, 0, brt) }
+	for _, tc := range []struct {
+		name         string
+		fetched, now time.Time
+		want         string
+	}{
+		{"two days earlier", at(4, 23, 50), at(6, 21, 0), "Sun 4 Oct 23:50"},
+		{"last night, after midnight", at(5, 23, 50), at(6, 0, 10), "Mon 5 Oct 23:50"},
+		{"last night, same UTC day", at(6, 23, 50), at(7, 0, 10), "Tue 6 Oct 23:50"},
+		{"earlier today", at(6, 8, 15), at(6, 21, 0), "08:15"},
+		{"today, past UTC midnight", at(6, 22, 0), at(6, 23, 0), "22:00"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cache := filepath.Join(t.TempDir(), "today.json")
+			if err := saveCache(cache, map[string]cachedSection{"a": {Raw: json.RawMessage(`["x"]`), FetchedAt: tc.fetched}}); err != nil {
+				t.Fatal(err)
+			}
+			rec := newRecorder()
+			a := &fakeSource{id: "a", fetch: fail(&HTTPError{Status: 502})}
+			e := New(context.Background(), nil, []Source{a}, brt, cache, rec.emit, func() time.Time { return tc.now })
+			if sec := find(e.Current(), "a"); sec.AsOf != tc.want {
+				t.Fatalf("from cache: as of %q, want %q", sec.AsOf, tc.want)
+			}
+			e.Refresh() // the Mac is asleep: the cache stays, with its own time
+			if sec := find(rec.snapshot(t), "a"); sec.Error != "offline" || sec.AsOf != tc.want {
+				t.Fatalf("after a failed fetch: %+v, want as of %q", sec, tc.want)
+			}
+		})
+	}
+}
+
 // The spec's error-handling table, as the engine words it.
 func TestFailuresSayWhatTheSpecSays(t *testing.T) {
 	for _, tc := range []struct {
@@ -574,6 +610,9 @@ func TestCachedDataIsRegroupedAfterMidnightEvenOffline(t *testing.T) {
 	if groupsOf(before) != "Overdue|Today|Next 7 days" {
 		t.Fatalf("before midnight = %s", groupsOf(before))
 	}
+	if before.AsOf != "21:00" {
+		t.Fatalf("before midnight as of %q, want the time alone", before.AsOf)
+	}
 
 	clk.set(time.Date(2026, 10, 7, 0, 30, 0, 0, loc))
 	e.Refresh()
@@ -585,7 +624,8 @@ func TestCachedDataIsRegroupedAfterMidnightEvenOffline(t *testing.T) {
 		t.Fatal("regrouped without a new rev")
 	}
 	sec := find(rec.snapshot(t), "due")
-	if sec.Status != "error" || sec.Error != "offline" || sec.AsOf != "21:00" || groupsOf(sec) != "Overdue|Next 7 days" {
+	// Fetched at 21:00 yesterday: the view must not read "as of 21:00".
+	if sec.Status != "error" || sec.Error != "offline" || sec.AsOf != "Tue 6 Oct 21:00" || groupsOf(sec) != "Overdue|Next 7 days" {
 		t.Fatalf("settled = %+v", sec)
 	}
 

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -64,6 +65,16 @@ func TestRequestsGoThroughTheProxyWithTheBearer(t *testing.T) {
 	r := seen.all()[0]
 	if r.RequestURI != "http://mac.test:8090/brief" || r.Header.Get("Authorization") != "Bearer tok" {
 		t.Fatalf("proxy saw %s %s auth=%q", r.Method, r.RequestURI, r.Header.Get("Authorization"))
+	}
+}
+
+// The proxy is not optional: a gateway without one is refused, so the bearer
+// never goes out on a direct connection. (With one configured, the test above
+// shows every request reaching the fake proxy: mac.test resolves nowhere else.)
+func TestNoProxyNoGateway(t *testing.T) {
+	_, err := NewGateway(Config{GatewayURL: "http://mac.test:8090", TokenFile: "/unused", Timezone: "UTC"}, "tok")
+	if err == nil || !strings.Contains(err.Error(), "proxy is required") {
+		t.Fatalf("err = %v, want proxy is required", err)
 	}
 }
 

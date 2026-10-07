@@ -60,8 +60,9 @@ This page describes the code as it is. The tests are beside it, in
 - Column sections sit below, in the order the backend sends them: two across
   in landscape, one in portrait. Each has its title, a status line, and rows
   grouped under optional group titles. The status line reads
-  `as of 07:02 · <error> · <warning>`; a section with no data yet says its
-  error or "No data yet", and one with data but no items says "Nothing here".
+  `as of 07:02 · <error> · <warning>` (`as of Mon 5 Oct 23:50` when the data
+  is from an earlier day); a section with no data yet says its error or "No
+  data yet", and one with data but no items says "Nothing here".
 - Tapping a row opens a sheet with the item's full title, subtitle and detail,
   and one button per action. A running action shows `…` on its button. If the
   action is refused the sheet stays open, shows the reason, and the item stays;
@@ -128,8 +129,8 @@ URLs never reach the tablet's cache.
 
 | Situation | What is shown |
 |-----------|---------------|
-| The Mac is asleep or the gateway is down (timeout, network error, or 502 to 504 with no message), and a section has cached data | The cached data, marked `as of HH:MM · offline` |
-| The same, with nothing cached | "Can't reach the Mac. Today needs the Mac awake." |
+| The Mac is asleep or the gateway is down (timeout, network error, or 502 to 504 with no message), and a section has cached data | The cached data, marked `as of HH:MM · offline` (`as of Mon 5 Oct 23:50 · offline` if the data is from an earlier day) |
+| The same, with nothing cached | "Can't reach the Mac. Today needs the Mac awake." (when other sections do have data, a section without any just says `offline`) |
 | One section's fetch fails otherwise (an HTTP error, or data it can't use) | That section says `unavailable: <reason>`, beside its cached data if it has any. The others show as usual |
 | 403 with `peer not allowed` | "The Mac doesn't recognise this tablet yet. Try again in a minute." |
 | 401, or any other 403 | "Tablet not authorised. Run rm-today-setup." |

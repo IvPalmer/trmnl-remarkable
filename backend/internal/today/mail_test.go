@@ -39,6 +39,14 @@ func TestMailKeepsTenAndNoIdsOrURLs(t *testing.T) {
 	}
 }
 
+func TestMailBuildTreatsANilZoneAsUTC(t *testing.T) {
+	raw := json.RawMessage(mailJSON(1, `[{"email":"a@example.com","ok":true}]`))
+	b, err := MailSource{}.Build(raw, spNow, nil)
+	if err != nil || b.Groups[0].Items[0].Subtitle != "Ana 0 · Tue 6 Oct 18:04" {
+		t.Fatalf("Build = %+v, %v", b, err)
+	}
+}
+
 func TestMailPartialFailureWarnsAndTotalFailureFails(t *testing.T) {
 	two := `[{"email":"a@example.com","ok":true},{"email":"b@example.com","ok":false,"error":"token expired"}]`
 	b, err := MailSource{}.Build(json.RawMessage(mailJSON(1, two)), spNow, time.UTC)
