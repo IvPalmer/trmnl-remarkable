@@ -35,6 +35,7 @@ import (
 	"trmnl-remarkable/backend/internal/dither"
 	"trmnl-remarkable/backend/internal/power"
 	"trmnl-remarkable/backend/internal/protocol"
+	"trmnl-remarkable/backend/internal/today"
 	"trmnl-remarkable/backend/internal/trmnl"
 	"trmnl-remarkable/backend/internal/update"
 )
@@ -58,6 +59,8 @@ const (
 	msgBatteryStop            uint32 = 15
 	msgBatteryReset           uint32 = 16
 	msgSaveBrightnessSchedule uint32 = 17
+	msgTodayRefresh           uint32 = 18
+	msgTodayAct               uint32 = 19
 	msgState                  uint32 = 101
 	msgImage                  uint32 = 102
 	msgStatus                 uint32 = 103
@@ -103,6 +106,8 @@ type app struct {
 	updates                          *update.Checker
 	updateResult                     update.Result
 	brightnessScheduleChanged        chan struct{}
+	today                            *today.Engine
+	todayProblem                     string
 }
 
 func main() {
@@ -197,6 +202,7 @@ func main() {
 	go a.brightnessScheduler()
 	go a.batterySampler()
 	go a.updateWatcher()
+	a.today, a.todayProblem = openToday(ctx, home, a.send)
 	if e, ok := a.cache.Latest(); ok && cfg.StartWithCacheOffline {
 		a.sendImage(e, true)
 	}
@@ -214,6 +220,38 @@ func main() {
 		a.handle(m)
 	}
 	a.cleanup()
+}
+
+// openToday starts the Today view when today.json exists. A missing file is
+// not an error: Today just says it isn't set up. The second result is the
+// problem to show when the file exists but cannot be used; it never contains
+// the token.
+func openToday(ctx context.Context, home string, emit today.Emitter) (*today.Engine, string) {
+	dir := filepath.Join(home, ".config", "trmnl-remarkable")
+	cfg, err := today.LoadConfig(filepath.Join(dir, "today.json"))
+	if errors.Is(err, today.ErrNotConfigured) {
+		return nil, ""
+	}
+	if err != nil {
+		log.Printf("today: %v", err)
+		return nil, err.Error()
+	}
+	token, err := today.ReadToken(cfg.TokenFile)
+	if err != nil {
+		log.Printf("today: token: %v", err)
+		return nil, err.Error()
+	}
+	gw, err := today.NewGateway(cfg, token)
+	if err != nil {
+		log.Printf("today: %v", err)
+		return nil, err.Error()
+	}
+	sources, unknown := today.Enabled(cfg.Sections)
+	for _, u := range unknown {
+		log.Printf("today: unknown section %q ignored", u)
+	}
+	cachePath := filepath.Join(home, ".cache", "trmnl-remarkable", "today.json")
+	return today.New(ctx, gw, sources, cfg.Location(), cachePath, emit, time.Now), ""
 }
 
 func (a *app) handle(m protocol.Message) {
@@ -279,8 +317,32 @@ func (a *app) handle(m protocol.Message) {
 				a.sendState()
 			}
 		}
+	case msgTodayRefresh:
+		if a.today == nil {
+			a.send(today.MsgToday, today.NotConfigured(a.todayProblem))
+			return
+		}
+		a.today.Refresh()
+	case msgTodayAct:
+		var v struct {
+			Section string `json:"section"`
+			Rev     uint64 `json:"rev"`
+			Action  string `json:"action"`
+			Key     string `json:"key"`
+		}
+		switch {
+		case a.today == nil:
+			a.send(today.MsgActResult, `{"ok":false,"message":"Today is not set up"}`)
+		case json.Unmarshal([]byte(m.Contents), &v) != nil:
+			a.send(today.MsgActResult, `{"ok":false,"message":"bad action request"}`)
+		default:
+			a.today.Act(v.Section, v.Rev, v.Action, v.Key)
+		}
 	case msgClearCache:
 		_ = a.cache.Clear()
+		if a.today != nil {
+			a.today.ClearCache()
+		}
 		a.sendStatus("Cache cleared")
 	case msgDiagnostics:
 		a.send(msgDiagnosticsResult, a.diagnostics())

@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -277,5 +279,40 @@ func writePowerSupply(t *testing.T, root, name, typ, capacity string) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "capacity"), []byte(capacity+"\n"), 0600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestOpenTodayIsOffWithoutItsConfig(t *testing.T) {
+	e, problem := openToday(context.Background(), t.TempDir(), func(uint32, string) {})
+	if e != nil || problem != "" {
+		t.Fatalf("openToday = %v, %q", e, problem)
+	}
+}
+
+func TestOpenTodayReportsABadConfigWithoutTheToken(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".config", "trmnl-remarkable")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	tok := filepath.Join(dir, "today.token")
+	if err := os.WriteFile(tok, []byte("secret value\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := json.Marshal(map[string]string{
+		"gateway_url": "http://mac.test:8090",
+		"proxy":       "http://127.0.0.1:1055",
+		"token_file":  tok,
+		"timezone":    "America/Sao_Paulo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "today.json"), cfg, 0600); err != nil {
+		t.Fatal(err)
+	}
+	e, problem := openToday(context.Background(), home, func(uint32, string) {})
+	if e != nil || problem == "" || strings.Contains(problem, "secret") {
+		t.Fatalf("openToday = %v, %q", e, problem)
 	}
 }
