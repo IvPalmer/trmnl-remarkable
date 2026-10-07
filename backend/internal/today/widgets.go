@@ -399,8 +399,8 @@ func (WidgetsSource) Act(ctx context.Context, c Client, action string, ref ItemR
 // actFailed words a failed action (spec Appendix A3). A refusal (409) or an
 // unknown widget or action (404) means the screen is stale: one refetch. A
 // denial (403 with outcome "denied") is said as the gateway says it, except
-// the gate's own "peer not allowed", which answers in the action's shape too
-// and keeps UserMessage's wording. A timeout or a dropped connection is
+// the gate's own refusals ("peer not allowed", "service peer not permitted"),
+// which answer in the action's shape too and keep UserMessage's wording. A timeout or a dropped connection is
 // "unknown": the action may have run, so nothing is retried or refetched. The
 // tablet's own problems (Tailscale, its token) keep UserMessage's wording.
 func actFailed(err error, title string) (ActResult, error) {
@@ -415,7 +415,8 @@ func actFailed(err error, title string) (ActResult, error) {
 		return ActResult{Refetch: true}, errors.New(orElse(he.Message, "The app refused this"))
 	case he.Status == http.StatusNotFound:
 		return ActResult{Refetch: true}, errors.New(orElse(he.Message, "This action is no longer offered"))
-	case he.Status == http.StatusForbidden && he.Outcome == "denied" && he.Message != "peer not allowed":
+	case he.Status == http.StatusForbidden && he.Outcome == "denied" &&
+		he.Message != "peer not allowed" && he.Message != "service peer not permitted":
 		return ActResult{}, errors.New(orElse(he.Message, "Not allowed from this tablet"))
 	case he.Status >= 502 && he.Status <= 504:
 		return ActResult{}, errors.New(orElse(he.Message, unknown))

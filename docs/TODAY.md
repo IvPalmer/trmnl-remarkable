@@ -143,10 +143,10 @@ Actions:
 |--------|---------------|------|
 | 200 `done` | the app's message, or "Done", in the footer | one refetch if the app says the screen changed |
 | 409 `refused` | the app's reason in the sheet; the item stays | one refetch |
-| 403 `denied` | the gateway's reason in the sheet | nothing |
+| 403 `denied` from the widget hub (not on this screen, not permitted here) | the gateway's reason in the sheet | nothing |
 | 404 `denied` | the reason ("unknown action") in the sheet | one refetch |
 | 502, 503, 504, a timeout, or a dropped connection | "Unknown — check <widget title> in its app" (the gateway's own words, when it sent some) | nothing: never retried |
-| 401, or a 403 that isn't a `denied` answer (the gate's own `peer not allowed` included) | the wording in the table above | nothing |
+| 401, or a 403 from the gateway's gate (`peer not allowed`, `service peer not permitted`), though it also says `denied` | the wording in the table above | nothing |
 | Any other status | the gateway's message, or `The Mac answered HTTP <status>` | nothing |
 | tailscaled isn't running | "Tailscale isn't running on the tablet"; nothing was sent | nothing |
 | The engine refuses | "this list changed; check it again" (stale `rev`), "this item is no longer there", "another action is in progress", "unknown section", "this item doesn't offer that action" | — |

@@ -375,6 +375,8 @@ func TestActionOutcomes(t *testing.T) {
 		// refusal carries outcome "denied" too; it keeps the default wording.
 		{"refused by the gate", &HTTPError{Status: 403, Message: "peer not allowed", Outcome: "denied"}, "", false,
 			"The Mac doesn't recognise this tablet yet. Try again in a minute."},
+		{"refused by the gate, grant", &HTTPError{Status: 403, Message: "service peer not permitted", Outcome: "denied"}, "", false,
+			"Tablet not authorised. Run rm-today-setup."},
 		{"refused without an outcome", &HTTPError{Status: 403, Message: "service-peer-route"}, "", false, "Tablet not authorised. Run rm-today-setup."},
 		{"unknown action", &HTTPError{Status: 404, Message: "unknown action", Outcome: "denied"}, "", true, "unknown action"},
 		{"the app timed out", &HTTPError{Status: 504, Message: "Unknown — check in Demo", Outcome: "unknown"}, "", false, "Unknown — check in Demo"},

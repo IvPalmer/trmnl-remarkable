@@ -1,6 +1,6 @@
-// Package today is the Today view: sections of the operator's day, read from
-// their session gateway through the tablet's Tailscale proxy. Adding a section
-// is one Source; see sources.go and docs/TODAY.md.
+// Package today is the Today view: the user's widget screen, read from their
+// session gateway through the tablet's Tailscale proxy. The gateway decides
+// what it shows; see "Changing what Today shows" in docs/TODAY.md.
 package today
 
 import (
