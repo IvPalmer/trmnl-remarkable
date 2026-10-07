@@ -93,7 +93,7 @@ type Source interface {
 
 // Registry is every section Today knows, in the default order.
 func Registry() []Source {
-	return []Source{BriefSource{}, DueSource{}}
+	return []Source{BriefSource{}, DueSource{}, MailSource{}}
 }
 
 // Enabled picks the sources named in order (all of Registry when order is
