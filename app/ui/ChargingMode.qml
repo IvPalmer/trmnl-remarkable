@@ -57,6 +57,9 @@ Item {
         interval: mode.nudgeInterval
         repeat: true
         running: mode.armed
+        // Nudge at once when charging starts, not one interval later: the
+        // system's own timer may already be close to firing.
+        triggeredOnStart: true
         onTriggered: if (mode.holding()) mode.nudge()
     }
 

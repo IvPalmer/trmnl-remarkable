@@ -260,6 +260,8 @@ time keeps moving. Nothing needs switching on.
   display is awake, the app reports user activity to the system every minute,
   which restarts the idle timer. Nothing is written to the reMarkable settings
   or to disk, so killing the app cannot leave the tablet awake on battery.
+- The reading reaches the UI as message 112, `{"charger_online", "charger_read_at"}`
+  (milliseconds since the epoch), every 30 seconds and in the first state.
 - **The charger, not the battery, decides.** The Paper Pro's battery reads
   "Discharging" at 100% on the charger, so the battery status is not used.
 - **A reMarkable update can change it.** The call into the system is made from

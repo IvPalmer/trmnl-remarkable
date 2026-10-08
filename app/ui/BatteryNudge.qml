@@ -9,7 +9,11 @@ import com.remarkable
 QtObject {
     // The display is showing the page, not the sleep screen. A nudge while it
     // sleeps would wake it, so charging mode asks first.
-    readonly property bool awake: BatteryManager.displayState === BatteryManager.Normal
+    // Both names must exist: if a future system renamed them, undefined ===
+    // undefined would read as awake.
+    readonly property bool awake: typeof BatteryManager.displayState !== "undefined"
+        && typeof BatteryManager.Normal !== "undefined"
+        && BatteryManager.displayState === BatteryManager.Normal
 
     // Reports user activity, which restarts the system's idle timer. Nothing is
     // changed or saved: the timer's setting stays as the user left it.

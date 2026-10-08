@@ -55,6 +55,14 @@ TestCase {
     function init() { tc.fakeNow = 1800000000000 }
 
     // --- the heartbeat -----------------------------------------------------
+    function test_nudges_at_once_when_charging_starts() {
+        // A long beat: the first nudge must come from arming, not from a tick.
+        var mode = make({nudgeInterval: 60000, chargerOnline: false})
+        var nudges = spy(mode, "nudge")
+        mode.chargerOnline = true
+        tryVerify(function() { return nudges.count === 1 }, 1000)
+    }
+
 
     function test_nudges_every_beat_while_charging_in_front_and_awake() {
         var mode = make({})
