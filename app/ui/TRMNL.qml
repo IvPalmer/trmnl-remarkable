@@ -26,6 +26,10 @@ Rectangle {
     property bool settingsVisible: false
     property bool brightnessScheduleVisible: false
     property bool todayVisible: false   // remarkable-ai
+    // remarkable-ai: the backend's newest charger reading (message 112 and the
+    // state): online or not, and when it was read in Unix milliseconds.
+    property bool chargerOnline: false
+    property real chargerReadAt: 0
     // remarkable-ai: the tap regions a BYOS server sent with the image shown
     // (message 102), and the screen they were made for.
     property var taps: []
@@ -102,6 +106,12 @@ Rectangle {
         useSystemBrightness.checked = !!appConfig.use_system_brightness
         settingsUseSystemBrightness.checked = !!appConfig.use_system_brightness
         if (!apiKeyConfigured && !appConfig.device_id) settingsVisible = true
+        applyCharger(s)   // remarkable-ai
+    }
+    // remarkable-ai: no charger fields means no reading, which reads as not charging.
+    function applyCharger(s) {
+        chargerOnline = !!s.charger_online
+        chargerReadAt = s.charger_read_at || 0
     }
     function configureFields() {
         var c = appConfig
@@ -348,10 +358,38 @@ Rectangle {
             else if (type === 109) { todayView.apply(data) }   // remarkable-ai
             else if (type === 110) { todayView.actionResult(data) }
             else if (type === 111) { tapSheet.result(data) }
+            else if (type === 112) { root.applyCharger(data) }   // remarkable-ai
         }
     }
 
     Component.onCompleted: endpoint.sendMessage(1, "")
+
+    // remarkable-ai: charging mode. While the charger is online and TRMNL is in
+    // front, tell the system once a minute that someone is there, so its idle
+    // timer does not draw the sleep screen, and refetch Today every 5 minutes.
+    // The system's power manager is reached only through BatteryNudge.qml, in a
+    // Loader: if it cannot be loaded, this does nothing and the app is unaffected.
+    Loader {
+        id: batteryNudge
+        source: "BatteryNudge.qml"
+    }
+    ChargingMode {
+        id: chargingMode
+        chargerOnline: root.chargerOnline
+        chargerReadAt: root.chargerReadAt
+        // qmllint disable missing-property
+        appActive: root.visible && Qt.application.state === Qt.ApplicationActive
+        displayAwake: batteryNudge.item ? batteryNudge.item.awake : false
+        // qmllint enable missing-property
+        todayShowing: root.todayVisible
+        todayRefreshing: todayView.refreshing
+        onNudge: {
+            // qmllint disable missing-property
+            if (batteryNudge.item) batteryNudge.item.nudge()
+            // qmllint enable missing-property
+        }
+        onRefreshToday: endpoint.sendMessage(18, "{}")
+    }
     Connections {
         target: Qt.application
         function onStateChanged() {

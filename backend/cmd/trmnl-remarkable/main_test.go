@@ -1033,3 +1033,109 @@ func TestASecondTapWhileOneIsInFlightIsBusyAndNotSent(t *testing.T) {
 }
 
 func mustReply(reply string, _ bool) string { return reply }
+
+// chargerFixture is a power_supply directory with a battery that reads full
+// and "Discharging" (as the Paper Pro does on its charger) and one USB charger.
+func chargerFixture(t *testing.T, online string) (root string, set func(string)) {
+	t.Helper()
+	root = t.TempDir()
+	write := func(rel, value string) {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(value+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("battery/type", "Battery")
+	write("battery/capacity", "100")
+	write("battery/status", "Discharging")
+	write("charger/type", "USB")
+	write("charger/online", online)
+	return root, func(v string) { write("charger/online", v) }
+}
+
+type chargerMsg struct {
+	Online bool  `json:"charger_online"`
+	ReadAt int64 `json:"charger_read_at"`
+}
+
+func TestStateCarriesTheChargerReadingOnceOneIsTaken(t *testing.T) {
+	// The fixture battery is full and "Discharging", yet the charger is online.
+	root, _ := chargerFixture(t, "1")
+	o := &outbox{}
+	a := &app{emit: o.emit, chargerRoot: root}
+
+	// Before the first reading the state says nothing about the charger, so a
+	// UI that never hears one has no stale answer to act on.
+	a.sendState()
+	if raw := o.of(msgState)[0]; strings.Contains(raw, "charger_") {
+		t.Fatalf("a state before any reading: %s", raw)
+	}
+
+	before := time.Now().UnixMilli()
+	a.pollCharger()
+	a.sendState()
+	raw := o.of(msgState)[1]
+	var got chargerMsg
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Online || got.ReadAt < before || got.ReadAt > time.Now().UnixMilli() {
+		t.Fatalf("state = %+v (read between %d and now)", got, before)
+	}
+}
+
+func TestTheChargerLoopSendsAFreshReadingOnEveryTick(t *testing.T) {
+	root, set := chargerFixture(t, "1")
+	o := &outbox{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a := &app{emit: o.emit, chargerRoot: root, ctx: ctx}
+	done := make(chan struct{})
+	go func() { a.chargerLoop(5 * time.Millisecond); close(done) }()
+
+	last := func() chargerMsg {
+		all := o.of(msgCharger)
+		var p chargerMsg
+		if len(all) > 0 {
+			_ = json.Unmarshal([]byte(all[len(all)-1]), &p)
+		}
+		return p
+	}
+	waitFor(t, "an online reading", func() bool { return last().Online })
+	first := last().ReadAt
+	waitFor(t, "a newer stamp on an unchanged charger", func() bool { return last().Online && last().ReadAt > first })
+
+	set("0") // unplugged
+	waitFor(t, "an offline reading", func() bool { return !last().Online && last().ReadAt > 0 })
+	set("1")
+	waitFor(t, "online again", func() bool { return last().Online })
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the charger loop outlived its context")
+	}
+	n := len(o.of(msgCharger))
+	time.Sleep(30 * time.Millisecond)
+	if len(o.of(msgCharger)) != n {
+		t.Fatal("readings kept coming after the context ended")
+	}
+}
+
+func TestAMissingChargerReadsOfflineAndIsStillStamped(t *testing.T) {
+	o := &outbox{}
+	a := &app{emit: o.emit, chargerRoot: filepath.Join(t.TempDir(), "absent")}
+	r := a.pollCharger()
+	if r.Online || r.At.IsZero() {
+		t.Fatalf("reading = %+v", r)
+	}
+	a.sendState()
+	var got chargerMsg
+	if err := json.Unmarshal([]byte(o.of(msgState)[0]), &got); err != nil || got.Online || got.ReadAt == 0 {
+		t.Fatalf("state = %+v, err %v", got, err)
+	}
+}

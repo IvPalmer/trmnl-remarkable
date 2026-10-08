@@ -186,6 +186,10 @@ def main():
                 send(conn, MSG_INIT)
                 state, _ = wait_for(conn, MSG_STATE)
                 assert state["api_key_configured"] is False
+                # Charging mode: the first state already carries a charger reading
+                # (online or not, whatever this machine's power_supply says).
+                assert isinstance(state["charger_online"], bool)
+                assert state["charger_read_at"] > 0
                 config = state["config"]
                 config.update({"api_key": "local-test", "base_url": "http://127.0.0.1:19988", "device_id": "", "minimum_refresh_seconds": 60})
                 send(conn, MSG_SAVE, json.dumps(config))
