@@ -25,9 +25,12 @@ ID/MAC, app version, model name, battery voltage, and (if later implemented by
 the platform) signal strength. The server returns image URLs and refresh
 instructions. Firmware/reset instructions are ignored.
 
-Production API and image traffic requires HTTPS. The only HTTP exception is a
-loopback development mock on the tablet. Credential-bearing redirects cannot
-change origin or protocol.
+Production API and image traffic requires HTTPS. The HTTP exceptions are a
+loopback development mock on the tablet and, only when a loopback proxy is
+configured, a tailnet host (see [BYOS.md](BYOS.md)). The key is sent only to the
+server's own origin: Device API redirects cannot change origin or protocol, and
+an image download that is redirected off that origin carries no key for the rest
+of the chain.
 
 ## Update check
 

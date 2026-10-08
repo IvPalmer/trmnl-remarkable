@@ -148,7 +148,8 @@ Item {
                         required property var modelData
                         objectName: "tapAction"
                         width: 300
-                        caption: sheet.acting && sheet.actingAction === (actionButton.modelData.id || "")
+                        caption: sheet.acting && sheet.actingSerial === sheet.serial
+                                 && sheet.actingAction === (actionButton.modelData.id || "")
                                  ? "…" : (actionButton.modelData.label || "")
                         onClicked: sheet.choose(actionButton.modelData)
                     }

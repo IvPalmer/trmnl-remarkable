@@ -1,8 +1,9 @@
 # BYOS extensions
 
 Three things that matter to people running their own BYOS server (a server
-that speaks the TRMNL Device API). All of them are optional: a server that
-knows nothing about them works exactly as before.
+that speaks the TRMNL Device API). The first two are opt-in: a server that
+knows nothing about them works exactly as before. The third applies to every
+server, and only changes image requests to the server's own origin.
 
 - [Tap regions](#tap-regions): a server can mark parts of the image it serves
   as tappable, and the tablet turns a tap into an action.
@@ -131,7 +132,7 @@ run the action. Without a gateway the sheet says "Actions need the Today
 gateway configured" and nothing is sent.
 
 Only one action runs at a time. A second tap while one is in flight is
-answered "Another action is still running" and never sent. A request that
+answered "Another action is in progress" and never sent. A request that
 times out is reported as unknown ("Unknown — check <title> in its app") and is
 never retried: it may have run.
 
@@ -196,8 +197,9 @@ The Device API key is sent as the `access-token` header on calls to the
 server. For image downloads it is sent only when the image is on the **same
 origin** as the configured server URL: the same scheme, host and port (so
 `https://byos.example` and `https://byos.example:443` are the same origin). It
-is never sent to another host, and a redirect that leaves the origin has the
-header removed before it is followed.
+is never sent to another host. A redirect that leaves the origin has the
+header removed before it is followed, and it stays removed for the rest of the
+chain, even if a later hop comes back to the original origin.
 
 This lets a server keep its rendered images behind the same key as the API
 without leaking the key to a CDN or any other host an image URL may point to.

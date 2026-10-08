@@ -211,6 +211,7 @@ TestCase {
         sheet.show(tc.tapOf("Pear"), "page2")
         tc.settle()
         compare(tc.named(sheet, "tapAction")[0].enabled, false, "buttons wait for the old answer")
+        compare(tc.labelled("…").length, 0, "this opening ran nothing, so no button shows the ellipsis")
         sheet.result({ok: true, message: "Refreshed Apple", outcome: "done", refresh: true})
         compare(sheet.acting, false)
         compare(tc.textNamed("tapMessage").text, "")

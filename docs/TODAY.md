@@ -131,8 +131,9 @@ from the Go model; the view reads `screen`, which is
 "problem"}` plus the one field of its view: `stat` `{value, label, delta,
 trend, tone}`, `groups` (list), `spark`
 `{label, points (scaled 0..1), min, max, last, unit}`, `alert`
-`{text, tone}` or `metrics` `{rows: [{label, value, detail, tone}]}`. Item keys are `<widget id> <the app's key>`: stable, and
-opaque to the view. Times are formatted by the backend, in `timezone`.
+`{text, tone}` or `metrics` `{rows: [{label, value, detail, tone}]}`. Item
+keys are `<widget id> <the app's key>`: stable, and opaque to the view. Times
+are formatted by the backend, in `timezone`.
 
 ## What the tablet says when something is wrong
 

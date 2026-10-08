@@ -7,8 +7,8 @@ Readme · MD
 `IvPalmer/trmnl-remarkable` (branch `remarkable-ai`) is upstream v2.4.0 plus:
 
 - **Today**: a native screen (Menu → Today) that draws the widgets a private
-  gateway places on the tablet's screen (stat, list, spark and alert
-  views, with item actions), over Tailscale. It is off unless
+  gateway places on the tablet's screen (stat, list, spark, alert and
+  metrics views, with item actions), over Tailscale. It is off unless
   `~/.config/trmnl-remarkable/today.json` exists. See [docs/TODAY.md](docs/TODAY.md).
 - **BYOS extensions**: tap regions a BYOS server can mark on its image, a
   loopback proxy setting for servers on a tailnet, and the access token sent
@@ -284,7 +284,8 @@ key is stored in an owner-only `0600` file, masked in the UI, kept out of logs,
 and never sent back to the interface after saving. Remote servers and images
 must use HTTPS (plain HTTP is allowed only to a tailnet host through a loopback
 proxy, see [docs/BYOS.md](docs/BYOS.md)), credential-bearing cross-origin
-redirects are refused, and
+redirects are refused (an image redirected off the server's origin is followed
+without the key), and
 downloaded images are size- and dimension-checked before decoding. The app
 ignores firmware and reset directives from the server.
 

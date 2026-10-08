@@ -362,6 +362,7 @@ Rectangle {
                 root.settingsVisible = false
                 root.brightnessScheduleVisible = false
                 root.todayVisible = false   // remarkable-ai
+                tapSheet.close()            // remarkable-ai
                 diagnosticsPopup.close()
                 root.cleanScreen()
                 endpoint.sendMessage(10, "")
