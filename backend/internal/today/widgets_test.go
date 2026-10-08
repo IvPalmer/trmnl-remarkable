@@ -91,7 +91,7 @@ const okStat = `"stat":{"value":"7","label":"Open"}`
 
 func viewsSet(c Cell) int {
 	n := 0
-	for _, set := range []bool{c.Stat != nil, c.Groups != nil, c.Spark != nil, c.Alert != nil} {
+	for _, set := range []bool{c.Stat != nil, c.Groups != nil, c.Spark != nil, c.Alert != nil, c.Metrics != nil} {
 		if set {
 			n++
 		}
@@ -505,4 +505,152 @@ func titlesOfCell(c Cell) string {
 		}
 	}
 	return strings.Join(out, ",")
+}
+
+// metricsCell lays one metrics widget out and returns its cell, whose data
+// is the "metrics" value given.
+func metricsCell(t *testing.T, metrics string) Cell {
+	t.Helper()
+	s := screenOf(t, `{"layout":{"grid":{"cols":2},"items":[{"widget":"demo.m","view":"metrics","x":0,"y":0,"w":2,"h":2}]},
+	 "widgets":{"demo.m":{"title":"Money","state":"ok","data":{"id":"m","title":"Money","as_of":"2026-10-07T09:00:00-03:00",
+	  "metrics":`+metrics+`},"actions":[]}}}`)
+	if len(s.Cells) != 1 {
+		t.Fatalf("cells = %+v", s.Cells)
+	}
+	return s.Cells[0]
+}
+
+func TestMetricsRowsKeepTheirOrderAndFields(t *testing.T) {
+	c := metricsCell(t, `{"rows":[
+	 {"label":"Realized P&L","value":"+$12.10","detail":"22 closed trades · live epochs","tone":"good"},
+	 {"label":"Open risk","value":"3","tone":"loud"},
+	 {"label":"Bots","value":"2 / 4","detail":"","tone":"bad"}]}`)
+	if c.Problem || c.Note != "" || viewsSet(c) != 1 || c.Metrics == nil {
+		t.Fatalf("cell = %+v", c)
+	}
+	want := []MetricRow{
+		{Label: "Realized P&L", Value: "+$12.10", Detail: "22 closed trades · live epochs", Tone: "good"},
+		{Label: "Open risk", Value: "3", Tone: "neutral"},
+		{Label: "Bots", Value: "2 / 4", Tone: "bad"},
+	}
+	if !reflect.DeepEqual(c.Metrics.Rows, want) {
+		t.Fatalf("rows\n got %+v\nwant %+v", c.Metrics.Rows, want)
+	}
+	// What the view receives.
+	if got := mustJSON(c.Metrics); got != `{"rows":[{"label":"Realized P\u0026L","value":"+$12.10","detail":"22 closed trades · live epochs","tone":"good"},`+
+		`{"label":"Open risk","value":"3","tone":"neutral"},{"label":"Bots","value":"2 / 4","tone":"bad"}]}` {
+		t.Fatalf("json = %s", got)
+	}
+}
+
+func TestMetricsRowsAreBounded(t *testing.T) {
+	var rows []string
+	for i := 1; i <= 10; i++ {
+		rows = append(rows, fmt.Sprintf(`{"label":"L%d","value":"V%d"}`, i, i))
+	}
+	c := metricsCell(t, `{"rows":[`+strings.Join(rows, ",")+`]}`)
+	if len(c.Metrics.Rows) != 8 || c.Metrics.Rows[7].Label != "L8" {
+		t.Fatalf("rows = %+v", c.Metrics.Rows)
+	}
+
+	// A row without a label or a value has nothing to show; the rest stay.
+	c = metricsCell(t, `{"rows":[{"label":"","value":"1"},{"label":"A","value":""},{"label":"B","value":"2"},{"value":"3"}]}`)
+	if len(c.Metrics.Rows) != 1 || c.Metrics.Rows[0].Label != "B" {
+		t.Fatalf("rows = %+v", c.Metrics.Rows)
+	}
+
+	long := strings.Repeat("é", 501)
+	c = metricsCell(t, `{"rows":[{"label":"`+long+`","value":"`+long+`","detail":"`+long+`"}]}`)
+	r := c.Metrics.Rows[0]
+	for _, s := range []string{r.Label, r.Value, r.Detail} {
+		if len([]rune(s)) != 500 {
+			t.Fatalf("a string kept %d characters", len([]rune(s)))
+		}
+	}
+}
+
+func TestMetricsWithNoUsableRowDrawsEmpty(t *testing.T) {
+	for _, m := range []string{`{"rows":[]}`, `{"rows":[{"label":"","value":""}]}`, `{}`, `null`} {
+		c := metricsCell(t, m)
+		if c.Metrics != nil || c.Problem || viewsSet(c) != 0 {
+			t.Errorf("%s: cell = %+v", m, c)
+		}
+	}
+}
+
+func TestMetricsOfTheWrongTypeFailOnlyThatCell(t *testing.T) {
+	s := screenOf(t, `{"layout":{"grid":{"cols":2},"items":[
+	 {"widget":"demo.bad","view":"metrics","x":0,"y":0,"w":1,"h":1},
+	 {"widget":"demo.ok","view":"metrics","x":1,"y":0,"w":1,"h":1}]},
+	 "widgets":{
+	  "demo.bad":{"title":"Bad","state":"ok","data":{"id":"b","title":"Bad","as_of":"2026-10-07T09:00:00-03:00","metrics":{"rows":[{"label":"A","value":5}]}},"actions":[]},
+	  "demo.ok":{"title":"Ok","state":"ok","data":{"id":"o","title":"Ok","as_of":"2026-10-07T09:00:00-03:00","metrics":{"rows":[{"label":"A","value":"5"}]}},"actions":[]}}}`)
+	if !s.Cells[0].Problem || s.Cells[0].Note != "unavailable: this tablet can't read its data" || s.Cells[1].Metrics == nil {
+		t.Fatalf("cells = %+v", s.Cells)
+	}
+}
+
+func TestATapActionPostsTheKeyAndTheTappedScreen(t *testing.T) {
+	c := &fakeClient{post: func(string, any) (string, error) {
+		return `{"ok":true,"message":"Paid","refresh":true,"outcome":"done"}`, nil
+	}}
+	got := TapAct(context.Background(), c, "vault.money", "tmpl:abc def", "confirm_payment", "page2", "Rent")
+	if got != (TapResult{OK: true, Message: "Paid", Outcome: "done", Refresh: true}) {
+		t.Fatalf("TapAct = %+v", got)
+	}
+	if len(c.posts) != 1 || c.posts[0].path != "/widgets/vault.money/actions/confirm_payment" ||
+		c.posts[0].body != `{"key":"tmpl:abc def","screen":"page2"}` {
+		t.Fatalf("posts = %+v", c.posts)
+	}
+	// Each id is one path segment, whatever it holds.
+	TapAct(context.Background(), c, "a.b/../c", "k", "x/y", "page1", "")
+	if c.posts[1].path != "/widgets/a.b%2F..%2Fc/actions/x%2Fy" {
+		t.Fatalf("path = %s", c.posts[1].path)
+	}
+	// A quiet success.
+	c.post = func(string, any) (string, error) { return `{"ok":true}`, nil }
+	if got := TapAct(context.Background(), c, "vault.money", "k", "a", "page1", ""); got != (TapResult{OK: true, Message: "Done", Outcome: "ok"}) {
+		t.Fatalf("quiet success = %+v", got)
+	}
+}
+
+// A tap action fails the way Act does, with the outcome the gateway named.
+func TestTapActionOutcomesMatchActs(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		body string
+		want TapResult
+	}{
+		{"refused", &HTTPError{Status: 409, Message: "no suggested transaction", Outcome: "refused"}, "",
+			TapResult{Message: "no suggested transaction", Outcome: "refused", Refresh: true}},
+		{"refused, no outcome", &HTTPError{Status: 409}, "", TapResult{Message: "The app refused this", Outcome: "refused", Refresh: true}},
+		{"200 but not ok", nil, `{"ok":false,"message":"nothing to do"}`, TapResult{Message: "nothing to do", Outcome: "refused", Refresh: true}},
+		{"denied by the layout", &HTTPError{Status: 403, Message: "not on this screen", Outcome: "denied"}, "",
+			TapResult{Message: "not on this screen", Outcome: "denied"}},
+		{"unknown action", &HTTPError{Status: 404, Message: "unknown action", Outcome: "denied"}, "",
+			TapResult{Message: "unknown action", Outcome: "denied", Refresh: true}},
+		{"the app timed out", &HTTPError{Status: 504, Message: "Unknown — check in Demo", Outcome: "unknown"}, "",
+			TapResult{Message: "Unknown — check in Demo", Outcome: "unknown"}},
+		{"the proxy gave up", &HTTPError{Status: 502}, "", TapResult{Message: "Unknown — check Rent in its app", Outcome: "unknown"}},
+		{"the tablet timed out", context.DeadlineExceeded, "", TapResult{Message: "Unknown — check Rent in its app", Outcome: "unknown"}},
+		{"tailscale down", fmt.Errorf("%w (refused)", ErrTailscaleDown), "", TapResult{Message: "Tailscale isn't running on the tablet", Outcome: "error"}},
+		{"token refused", &HTTPError{Status: 401, Message: "bad token"}, "", TapResult{Message: "Tablet not authorised. Run rm-today-setup.", Outcome: "error"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &fakeClient{post: func(string, any) (string, error) { return tc.body, tc.err }}
+			got := TapAct(context.Background(), c, "vault.money", "k", "a", "page1", "Rent")
+			if got != tc.want {
+				t.Fatalf("TapAct = %+v, want %+v", got, tc.want)
+			}
+			if len(c.posts) != 1 {
+				t.Fatalf("sent %d requests, want exactly 1", len(c.posts))
+			}
+		})
+	}
+	// With no title the widget id names the item.
+	c := &fakeClient{post: func(string, any) (string, error) { return "", context.DeadlineExceeded }}
+	if got := TapAct(context.Background(), c, "vault.money", "k", "a", "page1", ""); got.Message != "Unknown — check vault.money in its app" {
+		t.Fatalf("message = %q", got.Message)
+	}
 }

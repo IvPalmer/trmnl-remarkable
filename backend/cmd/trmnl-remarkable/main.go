@@ -660,7 +660,7 @@ func (a *app) fetch(t trigger) (bool, time.Duration) {
 		etag, lastModified = latest.ETag, latest.LastModified
 	}
 	timeout := time.Duration(int(r.ImageURLTimeout)) * time.Second
-	body, h, err := a.client.Download(a.ctx, r.ImageURL, timeout, etag, lastModified)
+	body, h, err := a.client.Download(a.ctx, cfg, r.ImageURL, timeout, etag, lastModified)
 	if errors.Is(err, trmnl.ErrNotModified) && has {
 		a.sendImage(latest, false)
 		a.sendState()
