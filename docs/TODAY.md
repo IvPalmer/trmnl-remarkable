@@ -74,7 +74,16 @@ This page describes the code as it is. The tests are beside it, in
   the view). The other cells draw as usual.
 - Views: **stat**, a large number with ▲ or ▼ from its delta's sign;
   **list**, rows grouped under optional titles; **spark**, a drawn line
-  with its last value and range; **alert**, the banners above.
+  with its last value and range; **alert**, the banners above; **metrics**,
+  a few labelled rows (below).
+- **Metrics** is one to eight rows, in the order the widget sent them. Each
+  row has a label at the left and its value at the right in bold, with an
+  optional detail line under them in small type. A row with a `warn` or `bad`
+  tone starts its label with `! ` or `!! ` and sets it in bold; `good` and
+  neutral rows carry no marker. A row without a label or a value is left out,
+  rows past the eighth are dropped, and each string is cut to 500
+  characters. More rows than fit in the cell scroll. All of it is drawn as
+  plain text, so markup in a label or value is shown as typed.
 - Tone shows as a marker and weight: `✓` good, `!` warn (bold), `!!` bad
   (bold); a warn or bad cell has a heavier frame.
 - Tapping a list row opens a sheet with its widget, title, subtitle, detail
@@ -121,8 +130,8 @@ from the Go model; the view reads `screen`, which is
 `{"widget", "view", "x", "y", "w", "h", "title", "tone", "note",
 "problem"}` plus the one field of its view: `stat` `{value, label, delta,
 trend, tone}`, `groups` (list), `spark`
-`{label, points (scaled 0..1), min, max, last, unit}` or `alert`
-`{text, tone}`. Item keys are `<widget id> <the app's key>`: stable, and
+`{label, points (scaled 0..1), min, max, last, unit}`, `alert`
+`{text, tone}` or `metrics` `{rows: [{label, value, detail, tone}]}`. Item keys are `<widget id> <the app's key>`: stable, and
 opaque to the view. Times are formatted by the backend, in `timezone`.
 
 ## What the tablet says when something is wrong

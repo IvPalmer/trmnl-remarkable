@@ -10,6 +10,10 @@ Readme · MD
   gateway places on the tablet's screen (stat, list, spark and alert
   views, with item actions), over Tailscale. It is off unless
   `~/.config/trmnl-remarkable/today.json` exists. See [docs/TODAY.md](docs/TODAY.md).
+- **BYOS extensions**: tap regions a BYOS server can mark on its image, a
+  loopback proxy setting for servers on a tailnet, and the access token sent
+  only to the server's own origin on image downloads. See
+  [docs/BYOS.md](docs/BYOS.md).
 - Landscape display patches marked `remarkable-ai` in `app/ui/TRMNL.qml`.
 
 It is installed by copying the built backend and `resources.rcc` over an
@@ -278,7 +282,9 @@ free space, SSH key, payload paths, and checksums before it changes anything,
 and remembers the tablet's SSH key so a change is caught on later runs. Your API
 key is stored in an owner-only `0600` file, masked in the UI, kept out of logs,
 and never sent back to the interface after saving. Remote servers and images
-must use HTTPS, credential-bearing cross-origin redirects are refused, and
+must use HTTPS (plain HTTP is allowed only to a tailnet host through a loopback
+proxy, see [docs/BYOS.md](docs/BYOS.md)), credential-bearing cross-origin
+redirects are refused, and
 downloaded images are size- and dimension-checked before decoding. The app
 ignores firmware and reset directives from the server.
 
@@ -292,6 +298,7 @@ issue.
 | Install walkthrough | [docs/install.md](docs/install.md) |
 | Supported devices and firmware | [docs/compatibility.md](docs/compatibility.md) |
 | Privacy and stored data | [docs/privacy.md](docs/privacy.md) |
+| BYOS tap regions, proxy and tailnet servers | [docs/BYOS.md](docs/BYOS.md) |
 | Windows code signing | [docs/code-signing.md](docs/code-signing.md) |
 | Release process | [docs/releasing.md](docs/releasing.md) |
 | Validation records | [docs/validation/](docs/validation/) |
