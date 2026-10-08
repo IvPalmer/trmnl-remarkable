@@ -375,7 +375,7 @@ func (a *app) tapAct(ctx context.Context, contents string) (reply string, refres
 		return say(message, ""), false
 	}
 	if !a.tapBusy.CompareAndSwap(false, true) {
-		return say("Another action is still running", "busy"), false
+		return say("Another action is in progress", "busy"), false
 	}
 	defer a.tapBusy.Store(false)
 	res := today.TapAct(ctx, a.gateway, v.Widget, v.Key, v.Action, v.Screen, v.Title)

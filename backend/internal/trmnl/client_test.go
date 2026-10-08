@@ -195,10 +195,11 @@ func TestDownloadSendsTokenOnTheDashboardOriginOnly(t *testing.T) {
 }
 
 func TestDownloadRedirectKeepsTokenOnOriginAndDropsItAfterLeaving(t *testing.T) {
-	finalSeen, midSeen := "unset", "unset"
+	finalSeen, midSeen, againSeen := "unset", "unset", "unset"
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		midSeen = r.Header.Get("access-token")
-		// Back to the dashboard's origin: allowed, and the key may travel again.
+		// Back to the dashboard's origin. The chain has already left it, so the
+		// key must not come back, however many same-origin hops follow.
 		http.Redirect(w, r, r.URL.Query().Get("back"), http.StatusFound)
 	}))
 	defer other.Close()
@@ -207,7 +208,10 @@ func TestDownloadRedirectKeepsTokenOnOriginAndDropsItAfterLeaving(t *testing.T) 
 		case "/same":
 			http.Redirect(w, r, "/final", http.StatusFound)
 		case "/away":
-			http.Redirect(w, r, other.URL+"/hop?back="+url.QueryEscape("http://"+r.Host+"/final"), http.StatusFound)
+			http.Redirect(w, r, other.URL+"/hop?back="+url.QueryEscape("http://"+r.Host+"/again"), http.StatusFound)
+		case "/again":
+			againSeen = r.Header.Get("access-token")
+			http.Redirect(w, r, "/final", http.StatusFound)
 		case "/final":
 			finalSeen = r.Header.Get("access-token")
 			fmt.Fprint(w, "image")
@@ -228,20 +232,78 @@ func TestDownloadRedirectKeepsTokenOnOriginAndDropsItAfterLeaving(t *testing.T) 
 	if midSeen != "" {
 		t.Fatalf("the token followed a redirect to another origin: %q", midSeen)
 	}
-	if finalSeen != "secret-token" {
-		t.Fatalf("a redirect back to the dashboard origin lost the token: %q", finalSeen)
+	if againSeen != "" || finalSeen != "" {
+		t.Fatalf("a redirect back to the dashboard origin sent the token again: %q then %q", againSeen, finalSeen)
 	}
 }
 
 func TestDownloadRefusesUnsafeRedirectTargets(t *testing.T) {
+	var target string
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "http://192.0.2.1/x.png", http.StatusFound)
+		http.Redirect(w, r, target, http.StatusFound)
 	}))
 	defer source.Close()
 	cfg := config.Defaults()
 	cfg.BaseURL = source.URL
-	if _, err := download(t, cfg, source.URL+"/a.png"); err == nil || !strings.Contains(err.Error(), "unsafe image redirect") {
-		t.Fatalf("redirect to plain HTTP elsewhere: %v", err)
+	// Each of these is refused by the transport rule itself, with the rule's
+	// words: a refusal that came from anywhere else (a DNS failure, say) would
+	// mean the rule did not apply.
+	for _, redirect := range []string{
+		"http://192.0.2.1/x.png",
+		"http://dash.example.ts.net:3000/x.png", // plain HTTP to a tailnet host needs a proxy
+	} {
+		target = redirect
+		_, err := download(t, cfg, source.URL+"/a.png")
+		if err == nil || !strings.Contains(err.Error(), "unsafe image redirect") || !strings.Contains(err.Error(), "HTTPS is required") {
+			t.Fatalf("redirect to %s: %v", redirect, err)
+		}
+	}
+}
+
+func TestProxiedImageRedirectToAnotherTailnetHostIsFollowedWithoutTheToken(t *testing.T) {
+	var seen []string
+	cfg := proxyStub(t, func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Host+r.URL.Path+"|"+r.Header.Get("access-token"))
+		if r.URL.Path == "/start.png" {
+			http.Redirect(w, r, "http://other.example.ts.net:3000/final.png", http.StatusFound)
+			return
+		}
+		fmt.Fprint(w, "image")
+	})
+	if body, err := download(t, cfg, "http://dash.example.ts.net:3000/start.png"); err != nil || body != "image" {
+		t.Fatalf("redirect through the proxy: %q, %v", body, err)
+	}
+	want := "dash.example.ts.net:3000/start.png|secret-token,other.example.ts.net:3000/final.png|"
+	if got := strings.Join(seen, ","); got != want {
+		t.Fatalf("proxy saw %q, want %q", got, want)
+	}
+	// A hop that is not a tailnet host stays refused with the proxy too.
+	for _, bad := range []string{"http://192.0.2.1/x.png", "http://.ts.net/x.png"} {
+		refused := proxyStub(t, func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, bad, http.StatusFound)
+		})
+		if _, err := download(t, refused, "http://dash.example.ts.net:3000/start.png"); err == nil || !strings.Contains(err.Error(), "unsafe image redirect") {
+			t.Fatalf("redirect to %s with a proxy: %v", bad, err)
+		}
+	}
+}
+
+func TestSameOriginNeedsSchemeHostAndPort(t *testing.T) {
+	for _, tc := range []struct {
+		a, b string
+		want bool
+	}{
+		{"https://dash.example.test", "https://dash.example.test:443/a.png", true},
+		{"http://dash.example.test", "http://DASH.example.test:80/a.png", true},
+		{"https://dash.example.test:443", "http://dash.example.test:443", false}, // same host and port, other scheme
+		{"http://dash.example.test:8080", "https://dash.example.test:8080", false},
+		{"https://dash.example.test", "https://dash.example.test:8443", false},
+		{"https://dash.example.test", "https://cdn.example.test", false},
+		{"", "https://dash.example.test", false},
+	} {
+		if got := SameOrigin(tc.a, tc.b); got != tc.want {
+			t.Errorf("SameOrigin(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+		}
 	}
 }
 
@@ -290,8 +352,13 @@ func TestDisplayAndDownloadGoThroughTheProxy(t *testing.T) {
 
 func TestTailnetHTTPIsRefusedWithoutAProxy(t *testing.T) {
 	cfg := config.Defaults()
-	if _, err := download(t, cfg, "http://dash.example.ts.net:3000/a.png"); err == nil {
-		t.Fatal("a plain-HTTP tailnet image was fetched with no proxy configured")
+	// The refusal must be the transport rule's: a DNS failure for the name
+	// would mean the request was attempted.
+	refusedByRule := func(err error) bool {
+		return err != nil && strings.Contains(err.Error(), "image URL:") && strings.Contains(err.Error(), "HTTPS is required")
+	}
+	if _, err := download(t, cfg, "http://dash.example.ts.net:3000/a.png"); !refusedByRule(err) {
+		t.Fatalf("a plain-HTTP tailnet image with no proxy configured: %v", err)
 	}
 	// A proxy that is configured per call applies per call: the same client
 	// used again without one is back to the strict rule.
@@ -303,8 +370,8 @@ func TestTailnetHTTPIsRefusedWithoutAProxy(t *testing.T) {
 	} else {
 		body.Close()
 	}
-	if _, _, err := c.Download(context.Background(), cfg, "http://dash.example.ts.net:3000/a.png", time.Second, "", ""); err == nil {
-		t.Fatal("the proxy setting leaked into a later call without one")
+	if _, _, err := c.Download(context.Background(), cfg, "http://dash.example.ts.net:3000/a.png", time.Second, "", ""); !refusedByRule(err) {
+		t.Fatalf("the proxy setting leaked into a later call without one: %v", err)
 	}
 	if viaProxy != 1 {
 		t.Fatalf("proxy served %d requests, want 1", viaProxy)

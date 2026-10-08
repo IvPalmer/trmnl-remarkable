@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -280,14 +281,15 @@ func isLoopbackHost(host string) bool {
 // tailnetRange is the carrier-grade NAT block Tailscale assigns addresses from.
 var tailnetRange = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
 
-// isTailnetHost reports whether host is a MagicDNS name (ending ".ts.net") or
-// an IPv4 address in 100.64.0.0/10.
+// isTailnetHost reports whether host is a MagicDNS name (one or more labels
+// before ".ts.net", none of them empty) or an IPv4 address in 100.64.0.0/10.
 func isTailnetHost(host string) bool {
 	if ip := net.ParseIP(host); ip != nil {
 		ip4 := ip.To4()
 		return ip4 != nil && tailnetRange.Contains(ip4)
 	}
-	return strings.HasSuffix(strings.ToLower(host), ".ts.net")
+	name, ok := strings.CutSuffix(strings.ToLower(host), ".ts.net")
+	return ok && !slices.Contains(strings.Split(name, "."), "")
 }
 
 // ValidateDashboardURL applies the transport policy shared by Device API and

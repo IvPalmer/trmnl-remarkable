@@ -1002,7 +1002,7 @@ func TestASecondTapWhileOneIsInFlightIsBusyAndNotSent(t *testing.T) {
 
 	reply, refresh := a.tapAct(context.Background(), goodTap)
 	res := decodeTapResult(t, reply)
-	if res.OK || res.Outcome != "busy" || res.Message == "" || res.Refresh || refresh {
+	if res.OK || res.Outcome != "busy" || res.Message != "Another action is in progress" || res.Refresh || refresh {
 		t.Fatalf("busy reply = %+v (refresh %v)", res, refresh)
 	}
 	// Through the message path too: the answer is on 111 and nothing is queued.

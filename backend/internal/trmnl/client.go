@@ -260,8 +260,10 @@ func SameOrigin(a, b string) bool {
 const tokenHeader = "access-token"
 
 // imageRedirectPolicy checks every hop of an image download against the
-// transport rules and takes the credential off any hop that has left the
-// dashboard's origin (Go forwards custom headers across redirects).
+// transport rules and takes the credential off every hop once the chain has
+// left the dashboard's origin, including a later hop that comes back to it:
+// Go copies the first request's custom headers onto each hop, so the token
+// must be dropped again on each one.
 func imageRedirectPolicy(cfg config.Config) func(*http.Request, []*http.Request) error {
 	return func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
@@ -270,7 +272,11 @@ func imageRedirectPolicy(cfg config.Config) func(*http.Request, []*http.Request)
 		if err := config.ValidateDashboardURL(req.URL.String(), cfg.Proxy != ""); err != nil {
 			return fmt.Errorf("unsafe image redirect: %w", err)
 		}
-		if !SameOrigin(cfg.BaseURL, req.URL.String()) {
+		left := !SameOrigin(cfg.BaseURL, req.URL.String())
+		for _, prev := range via {
+			left = left || !SameOrigin(cfg.BaseURL, prev.URL.String())
+		}
+		if left {
 			req.Header.Del(tokenHeader)
 		}
 		return nil

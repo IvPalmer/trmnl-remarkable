@@ -64,7 +64,7 @@ TestCase {
 
     function test_rows_come_in_order_with_label_value_and_detail() {
         tc.show([tc.cellOf([
-            tc.row("Realized P&L", "+$12.10", "22 closed trades", "good"),
+            tc.row("Realized P&L", "+$48.20", "31 closed trades", "good"),
             tc.row("Open risk", "3.1%", "", "warn"),
             tc.row("Drawdown", "-8%", "past the limit", "bad"),
             tc.row("Trades today", "4", "", "neutral")])])
@@ -72,8 +72,8 @@ TestCase {
         var values = tc.named(view, "metricValue")
         var details = tc.named(view, "metricDetail")
         compare(tc.strings(labels), ["Realized P&L", "! Open risk", "!! Drawdown", "Trades today"])
-        compare(tc.strings(values), ["+$12.10", "3.1%", "-8%", "4"])
-        compare(tc.strings(details), ["22 closed trades", "", "past the limit", ""])
+        compare(tc.strings(values), ["+$48.20", "3.1%", "-8%", "4"])
+        compare(tc.strings(details), ["31 closed trades", "", "past the limit", ""])
         compare(details.map(function(d) { return d.visible }), [true, false, true, false], "only a detail that exists takes room")
 
         // top to bottom in the order sent; the label at the left, the value at the right

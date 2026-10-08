@@ -522,14 +522,14 @@ func metricsCell(t *testing.T, metrics string) Cell {
 
 func TestMetricsRowsKeepTheirOrderAndFields(t *testing.T) {
 	c := metricsCell(t, `{"rows":[
-	 {"label":"Realized P&L","value":"+$12.10","detail":"22 closed trades · live epochs","tone":"good"},
+	 {"label":"Realized P&L","value":"+$48.20","detail":"31 closed trades","tone":"good"},
 	 {"label":"Open risk","value":"3","tone":"loud"},
 	 {"label":"Bots","value":"2 / 4","detail":"","tone":"bad"}]}`)
 	if c.Problem || c.Note != "" || viewsSet(c) != 1 || c.Metrics == nil {
 		t.Fatalf("cell = %+v", c)
 	}
 	want := []MetricRow{
-		{Label: "Realized P&L", Value: "+$12.10", Detail: "22 closed trades · live epochs", Tone: "good"},
+		{Label: "Realized P&L", Value: "+$48.20", Detail: "31 closed trades", Tone: "good"},
 		{Label: "Open risk", Value: "3", Tone: "neutral"},
 		{Label: "Bots", Value: "2 / 4", Tone: "bad"},
 	}
@@ -537,7 +537,7 @@ func TestMetricsRowsKeepTheirOrderAndFields(t *testing.T) {
 		t.Fatalf("rows\n got %+v\nwant %+v", c.Metrics.Rows, want)
 	}
 	// What the view receives.
-	if got := mustJSON(c.Metrics); got != `{"rows":[{"label":"Realized P\u0026L","value":"+$12.10","detail":"22 closed trades · live epochs","tone":"good"},`+
+	if got := mustJSON(c.Metrics); got != `{"rows":[{"label":"Realized P\u0026L","value":"+$48.20","detail":"31 closed trades","tone":"good"},`+
 		`{"label":"Open risk","value":"3","tone":"neutral"},{"label":"Bots","value":"2 / 4","tone":"bad"}]}` {
 		t.Fatalf("json = %s", got)
 	}
