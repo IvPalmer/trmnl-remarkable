@@ -251,9 +251,12 @@ Today, or one of its panels), the tablet does not go to the sleep screen after
 the usual idle delay, and **Today refetches every 5 minutes**, so its "as of"
 time keeps moving. Nothing needs switching on.
 
-- **Unplugging, closing TRMNL, or the screen going to sleep ends it.** The
-  usual idle delay runs out from the last nudge, so after you unplug, the tablet
-  goes to sleep about the usual delay later, half a minute more at most.
+- **Unplugging, closing TRMNL, or the screen going to sleep ends it.** The app
+  stops reporting activity within 2 minutes of unplugging, and the tablet is
+  back to its own battery behaviour. On a Paper Pro that means the processor
+  naps a few seconds after the last activity, with or without charging mode,
+  so TRMNL stops refreshing and the screen keeps its last image until you wake
+  the tablet.
 - **It changes no setting.** The backend reads whether a charger is online from
   `/sys/class/power_supply` (a `Mains` or `USB` supply, by type rather than by
   name) every 30 seconds. While that reading is under 2 minutes old and the
