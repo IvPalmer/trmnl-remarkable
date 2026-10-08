@@ -31,6 +31,7 @@ import (
 	"trmnl-remarkable/backend/internal/batterytest"
 	"trmnl-remarkable/backend/internal/brightness"
 	"trmnl-remarkable/backend/internal/cache"
+	"trmnl-remarkable/backend/internal/charger"
 	"trmnl-remarkable/backend/internal/config"
 	"trmnl-remarkable/backend/internal/device"
 	"trmnl-remarkable/backend/internal/dither"
@@ -72,6 +73,7 @@ const (
 	msgDiagnosticsResult      uint32 = 107
 	msgBatteryTest            uint32 = 108
 	msgTapResult              uint32 = 111
+	msgCharger                uint32 = 112
 )
 
 type historyEntry struct {
@@ -116,6 +118,10 @@ type app struct {
 	taps                             tapState             // guarded by mu
 	tapBusy                          atomic.Bool          // a tap action is in flight
 	emit                             func(uint32, string) // tests only: stands in for the AppLoad connection
+
+	chargerRoot string // the power_supply directory the charger is read from
+	chargerMu   sync.Mutex
+	chargerLast charger.Reading // the latest reading; zero until the first
 }
 
 // tapState is the tap list that came with one image. It is keyed by the cache
@@ -173,7 +179,7 @@ func main() {
 	}
 	defer conn.Close()
 	ctx, cancel := context.WithCancel(context.Background())
-	a := &app{cfg: cfg, configPath: configPath, dataDir: dataDir, historyPath: filepath.Join(dataDir, "history.json"), batteryPath: filepath.Join(dataDir, "battery-test.json"), conn: conn, client: trmnl.New(), cache: cache.Store{Dir: filepath.Join(home, ".cache", "trmnl-remarkable")}, triggers: make(chan trigger, 4), brightnessScheduleChanged: make(chan struct{}, 1), ctx: ctx, cancel: cancel}
+	a := &app{cfg: cfg, configPath: configPath, dataDir: dataDir, historyPath: filepath.Join(dataDir, "history.json"), batteryPath: filepath.Join(dataDir, "battery-test.json"), chargerRoot: powerSupplyRoot, conn: conn, client: trmnl.New(), cache: cache.Store{Dir: filepath.Join(home, ".cache", "trmnl-remarkable")}, triggers: make(chan trigger, 4), brightnessScheduleChanged: make(chan struct{}, 1), ctx: ctx, cancel: cancel}
 	a.panel = device.Detect()
 	log.Printf("panel: %s (%dx%d, colour=%t, front light=%t)", a.panel.Name, a.panel.Width, a.panel.Height, a.panel.Color, a.panel.Frontlight)
 	a.client.Version = version
@@ -218,6 +224,8 @@ func main() {
 	go a.scheduler()
 	go a.brightnessScheduler()
 	go a.batterySampler()
+	a.pollCharger()
+	go a.chargerLoop(chargerInterval)
 	go a.updateWatcher()
 	a.todayCache = todayCachePath(home)
 	a.today, a.gateway, a.todayProblem = openToday(ctx, home, a.send)
@@ -869,6 +877,10 @@ func (a *app) sendState() {
 	if e, ok := a.cache.Latest(); ok {
 		state["last_refresh"] = e.SavedAt
 	}
+	if r := a.chargerReading(); !r.At.IsZero() {
+		state["charger_online"] = r.Online
+		state["charger_read_at"] = r.AtMillis()
+	}
 	a.send(msgState, mustJSON(state))
 }
 
@@ -1002,6 +1014,48 @@ func (a *app) checkForUpdate() {
 	a.updateResult = result
 	a.mu.Unlock()
 	a.sendState()
+}
+
+// chargerInterval is how often the charger is read. The UI treats a reading
+// older than about two minutes as no reading, so this leaves room to miss a few.
+const chargerInterval = 30 * time.Second
+
+// pollCharger reads the charger now and remembers the reading.
+func (a *app) pollCharger() charger.Reading {
+	r := charger.Read(a.chargerRoot, time.Now())
+	a.chargerMu.Lock()
+	a.chargerLast = r
+	a.chargerMu.Unlock()
+	return r
+}
+
+func (a *app) chargerReading() charger.Reading {
+	a.chargerMu.Lock()
+	defer a.chargerMu.Unlock()
+	return a.chargerLast
+}
+
+// chargerPayload is message 112: whether the charger is online, and when (Unix
+// milliseconds) that was read. The state carries the same two fields.
+func chargerPayload(r charger.Reading) string {
+	return mustJSON(map[string]any{"charger_online": r.Online, "charger_read_at": r.AtMillis()})
+}
+
+// chargerLoop reads the charger every interval and tells the UI each time,
+// changed or not: the reading's age is what keeps charging mode honest. Message
+// 112 rather than the full state, because the state also resets the sliders and
+// fields of any panel the user has open.
+func (a *app) chargerLoop(every time.Duration) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			a.send(msgCharger, chargerPayload(a.pollCharger()))
+		case <-a.ctx.Done():
+			return
+		}
+	}
 }
 
 func (a *app) batterySampler() {

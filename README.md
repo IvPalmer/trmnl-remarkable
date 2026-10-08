@@ -14,6 +14,8 @@ Readme · MD
   loopback proxy setting for servers on a tailnet, and the access token sent
   only to the server's own origin on image downloads. See
   [docs/BYOS.md](docs/BYOS.md).
+- **Charging mode**: while the tablet is plugged in and TRMNL is open, it stays
+  awake and Today refetches every 5 minutes. See [Charging](#charging).
 - Landscape display patches marked `remarkable-ai` in `app/ui/TRMNL.qml`.
 
 It is installed by copying the built backend and `resources.rcc` over an
@@ -241,6 +243,37 @@ Three settings help further:
 For a real measurement, charge to full, unplug, start the battery test in
 Settings, and let it discharge at least 10%. Plugging in invalidates the
 estimate rather than skewing it quietly.
+
+### Charging
+
+While the charger is connected and TRMNL is the app in front (the dashboard,
+Today, or one of its panels), the tablet does not go to the sleep screen after
+the usual idle delay, and **Today refetches every 5 minutes**, so its "as of"
+time keeps moving. Nothing needs switching on.
+
+- **Unplugging, closing TRMNL, or the screen going to sleep ends it.** The app
+  stops reporting activity within 2 minutes of unplugging, and the tablet is
+  back to its own battery behaviour. On a Paper Pro that means the processor
+  naps a few seconds after the last activity, with or without charging mode,
+  so TRMNL stops refreshing and the screen keeps its last image until you wake
+  the tablet.
+- **It changes no setting.** The backend reads whether a charger is online from
+  `/sys/class/power_supply` (a `Mains` or `USB` supply, by type rather than by
+  name) every 30 seconds. While that reading is under 2 minutes old and the
+  display is awake, the app reports user activity to the system every minute,
+  which restarts the idle timer. Nothing is written to the reMarkable settings
+  or to disk, so killing the app cannot leave the tablet awake on battery.
+- The reading reaches the UI as message 112, `{"charger_online", "charger_read_at"}`
+  (milliseconds since the epoch), every 30 seconds and in the first state.
+- **The charger, not the battery, decides.** The Paper Pro's battery reads
+  "Discharging" at 100% on the charger, so the battery status is not used.
+- **A reMarkable update can change it.** The call into the system is made from
+  one small file, `app/ui/BatteryNudge.qml`, which loads separately. If the
+  system no longer offers it, charging mode does nothing and the rest of the app
+  is unaffected.
+
+The tablet stays awake and on Wi-Fi for as long as it charges, which is the
+point; on battery nothing changes.
 
 ## Removing it
 

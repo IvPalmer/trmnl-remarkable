@@ -4,5 +4,7 @@
     <file>ui/TodayView.qml</file>
     <file>ui/TapOverlay.qml</file>
     <file>ui/TapSheet.qml</file>
+    <file>ui/ChargingMode.qml</file>
+    <file>ui/BatteryNudge.qml</file>
   </qresource>
 </RCC>
