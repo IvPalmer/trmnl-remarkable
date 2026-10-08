@@ -2,5 +2,7 @@
   <qresource>
     <file>ui/TRMNL.qml</file>
     <file>ui/TodayView.qml</file>
+    <file>ui/TapOverlay.qml</file>
+    <file>ui/TapSheet.qml</file>
   </qresource>
 </RCC>
