@@ -9,14 +9,21 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"time"
+	"trmnl-remarkable/backend/internal/cache"
 	"trmnl-remarkable/backend/internal/config"
+	"trmnl-remarkable/backend/internal/protocol"
 	"trmnl-remarkable/backend/internal/today"
+	"trmnl-remarkable/backend/internal/trmnl"
 )
 
 func TestReadBatteryPercentPrefersSystemBattery(t *testing.T) {
@@ -284,9 +291,9 @@ func writePowerSupply(t *testing.T, root, name, typ, capacity string) {
 }
 
 func TestOpenTodayIsOffWithoutItsConfig(t *testing.T) {
-	e, problem := openToday(context.Background(), t.TempDir(), func(uint32, string) {})
-	if e != nil || problem != "" {
-		t.Fatalf("openToday = %v, %q", e, problem)
+	e, gw, problem := openToday(context.Background(), t.TempDir(), func(uint32, string) {})
+	if e != nil || gw != nil || problem != "" {
+		t.Fatalf("openToday = %v, %v, %q", e, gw, problem)
 	}
 }
 
@@ -312,9 +319,9 @@ func TestOpenTodayReportsABadConfigWithoutTheToken(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "today.json"), cfg, 0600); err != nil {
 		t.Fatal(err)
 	}
-	e, problem := openToday(context.Background(), home, func(uint32, string) {})
-	if e != nil || problem == "" || strings.Contains(problem, "secret") {
-		t.Fatalf("openToday = %v, %q", e, problem)
+	e, gw, problem := openToday(context.Background(), home, func(uint32, string) {})
+	if e != nil || gw != nil || problem == "" || strings.Contains(problem, "secret") {
+		t.Fatalf("openToday = %v, %v, %q", e, gw, problem)
 	}
 }
 
@@ -352,18 +359,18 @@ func writeTodayConfig(t *testing.T, home string, extra map[string]any) string {
 func TestOpenTodayNeedsAKnownSection(t *testing.T) {
 	home := t.TempDir()
 	writeTodayConfig(t, home, map[string]any{"sections": []string{"nonsense"}})
-	e, problem := openToday(context.Background(), home, func(uint32, string) {})
-	if e != nil || problem != "today.json: no known sections" {
-		t.Fatalf("openToday = %v, %q", e, problem)
+	e, gw, problem := openToday(context.Background(), home, func(uint32, string) {})
+	if e != nil || gw != nil || problem != "today.json: no known sections" {
+		t.Fatalf("openToday = %v, %v, %q", e, gw, problem)
 	}
 }
 
 func TestOpenTodayKeepsTheKnownSectionsAmongUnknownOnes(t *testing.T) {
 	home := t.TempDir()
 	writeTodayConfig(t, home, map[string]any{"sections": []string{"nonsense", "widgets"}})
-	e, problem := openToday(context.Background(), home, func(uint32, string) {})
-	if e == nil || problem != "" {
-		t.Fatalf("openToday = %v, %q", e, problem)
+	e, gw, problem := openToday(context.Background(), home, func(uint32, string) {})
+	if e == nil || gw == nil || problem != "" {
+		t.Fatalf("openToday = %v, %v, %q", e, gw, problem)
 	}
 	if got := e.Current().Sections; len(got) != 1 || got[0].ID != "widgets" {
 		t.Fatalf("sections = %+v", got)
@@ -405,7 +412,7 @@ func TestClearCacheRemovesTodaysCacheWhileTodayIsOff(t *testing.T) {
 func TestClearCacheRemovesTodaysCacheWhenTodayIsBroken(t *testing.T) {
 	home := t.TempDir()
 	writeTodayConfig(t, home, map[string]any{"proxy": ""})
-	e, problem := openToday(context.Background(), home, func(uint32, string) {})
+	e, _, problem := openToday(context.Background(), home, func(uint32, string) {})
 	if e != nil || problem == "" {
 		t.Fatalf("openToday = %v, %q", e, problem)
 	}
@@ -421,7 +428,7 @@ func TestClearCacheGoesThroughTheEngineWhileTodayIsOn(t *testing.T) {
 	home := t.TempDir()
 	writeTodayConfig(t, home, nil)
 	var snapshots int
-	e, problem := openToday(context.Background(), home, func(typ uint32, _ string) {
+	e, _, problem := openToday(context.Background(), home, func(typ uint32, _ string) {
 		if typ == today.MsgToday {
 			snapshots++
 		}
@@ -487,7 +494,7 @@ func TestTodayActRefusalsCarryTheWholeReply(t *testing.T) {
 
 	home := t.TempDir()
 	writeTodayConfig(t, home, nil)
-	e, problem := openToday(context.Background(), home, func(uint32, string) {})
+	e, _, problem := openToday(context.Background(), home, func(uint32, string) {})
 	if e == nil {
 		t.Fatalf("openToday: %q", problem)
 	}
@@ -508,7 +515,7 @@ func TestTodayActPassesAGoodRequestToTheEngine(t *testing.T) {
 	writeTodayConfig(t, home, nil)
 	var typ uint32
 	var payload string
-	e, problem := openToday(context.Background(), home, func(t uint32, p string) { typ, payload = t, p })
+	e, _, problem := openToday(context.Background(), home, func(t uint32, p string) { typ, payload = t, p })
 	if e == nil {
 		t.Fatalf("openToday: %q", problem)
 	}
@@ -521,3 +528,508 @@ func TestTodayActPassesAGoodRequestToTheEngine(t *testing.T) {
 		t.Fatalf("engine got %d %s", typ, payload)
 	}
 }
+
+// outbox stands in for the AppLoad connection: everything the backend sends
+// lands here, in order.
+type outbox struct {
+	mu   sync.Mutex
+	msgs []outMsg
+	on   func(typ uint32)
+}
+
+type outMsg struct {
+	typ     uint32
+	payload string
+}
+
+func (o *outbox) emit(typ uint32, payload string) {
+	if o.on != nil {
+		o.on(typ)
+	}
+	o.mu.Lock()
+	o.msgs = append(o.msgs, outMsg{typ, payload})
+	o.mu.Unlock()
+}
+
+func (o *outbox) of(typ uint32) []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	var out []string
+	for _, m := range o.msgs {
+		if m.typ == typ {
+			out = append(out, m.payload)
+		}
+	}
+	return out
+}
+
+// waitFor polls cond for a few seconds; it is for work started on a goroutine.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(2 * time.Millisecond) {
+		if cond() {
+			return
+		}
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+// sentImage is message 102 as the view reads it.
+type sentImage struct {
+	Path      string      `json:"path"`
+	Cached    bool        `json:"cached"`
+	Taps      []trmnl.Tap `json:"taps"`
+	TapScreen string      `json:"tap_screen"`
+}
+
+func lastImage(t *testing.T, o *outbox) (sentImage, string) {
+	t.Helper()
+	all := o.of(msgImage)
+	if len(all) == 0 {
+		t.Fatal("no message 102 was sent")
+	}
+	raw := all[len(all)-1]
+	var im sentImage
+	if err := json.Unmarshal([]byte(raw), &im); err != nil {
+		t.Fatalf("102 %q: %v", raw, err)
+	}
+	return im, raw
+}
+
+func sampleTaps() []trmnl.Tap {
+	return []trmnl.Tap{{X: 10, Y: 20, W: 300, H: 40, Widget: "demo.tasks", Key: "t:41", Title: "Pay rent",
+		Actions: []trmnl.TapAction{{ID: "tick", Label: "Done"}, {ID: "drop", Label: "Drop", Confirm: "Drop it?"}}}}
+}
+
+func TestSendImageCarriesTapsOnlyForTheirOwnImage(t *testing.T) {
+	o := &outbox{}
+	a := &app{emit: o.emit}
+	one := cache.Entry{Path: "/cache/screen-1.png"}
+	two := cache.Entry{Path: "/cache/screen-2.png"}
+	a.setTaps(one.Path, sampleTaps(), "page1")
+
+	a.sendImage(one, false)
+	im, _ := lastImage(t, o)
+	if len(im.Taps) != 1 || im.Taps[0].Widget != "demo.tasks" || im.Taps[0].Key != "t:41" || im.TapScreen != "page1" ||
+		len(im.Taps[0].Actions) != 2 || im.Taps[0].Actions[1].Confirm != "Drop it?" {
+		t.Fatalf("the image's own taps: %+v", im)
+	}
+
+	// Another image (the cached start-up screen, Previous) has no taps, and
+	// says so with [] and no screen, not null.
+	a.sendImage(two, true)
+	im, raw := lastImage(t, o)
+	if len(im.Taps) != 0 || im.TapScreen != "" || !strings.Contains(raw, `"taps":[]`) || !strings.Contains(raw, `"tap_screen":""`) {
+		t.Fatalf("another image: %s", raw)
+	}
+
+	// The same image again from the cache (settings save): its taps are still known.
+	a.sendImage(one, true)
+	if im, _ := lastImage(t, o); len(im.Taps) != 1 || im.TapScreen != "page1" || !im.Cached {
+		t.Fatalf("the same image from the cache: %+v", im)
+	}
+
+	// A newer image without taps replaces them: the old image shows none.
+	a.setTaps(two.Path, nil, "")
+	a.sendImage(one, true)
+	if im, raw := lastImage(t, o); len(im.Taps) != 0 || im.TapScreen != "" || !strings.Contains(raw, `"taps":[]`) {
+		t.Fatalf("after a newer image: %s", raw)
+	}
+}
+
+// displayServer is a BYOS server: /api/display answers with the current
+// image and taps, /img/* serves PNGs with an ETag.
+type displayServer struct {
+	*httptest.Server
+	mu        sync.Mutex
+	image     string // current image file name
+	taps      string // raw JSON for "taps" ("" omits the field)
+	tapScreen string
+	pngs      map[string][]byte
+}
+
+func newDisplayServer(t *testing.T) *displayServer {
+	t.Helper()
+	d := &displayServer{pngs: map[string][]byte{}}
+	for i, name := range []string{"a.png", "b.png"} {
+		img := image.NewNRGBA(image.Rect(0, 0, 4+i, 4))
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, img); err != nil {
+			t.Fatal(err)
+		}
+		d.pngs[name] = buf.Bytes()
+	}
+	d.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/display"):
+			resp := map[string]any{"status": 0, "image_url": d.URL + "/img/" + d.image, "filename": d.image, "refresh_rate": 60}
+			if d.taps != "" {
+				resp["taps"] = json.RawMessage(d.taps)
+				resp["tap_screen"] = d.tapScreen
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		case strings.HasPrefix(r.URL.Path, "/img/"):
+			name := strings.TrimPrefix(r.URL.Path, "/img/")
+			etag := `"` + name + `"`
+			if r.Header.Get("If-None-Match") == etag {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			w.Header().Set("ETag", etag)
+			_, _ = w.Write(d.pngs[name])
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(d.Close)
+	return d
+}
+
+func (d *displayServer) show(image, taps, screen string) {
+	d.mu.Lock()
+	d.image, d.taps, d.tapScreen = image, taps, screen
+	d.mu.Unlock()
+}
+
+const oneTapJSON = `[{"x":10,"y":20,"w":300,"h":40,"widget":"demo.tasks","key":"t:41","title":"Pay rent","actions":[{"id":"tick","label":"Done"}]}]`
+
+func TestFetchSendsTapsOnlyWithTheImageTheyCameWith(t *testing.T) {
+	srv := newDisplayServer(t)
+	o := &outbox{}
+	dir := t.TempDir()
+	cfg := config.Defaults()
+	cfg.BaseURL = srv.URL
+	cfg.DeviceID = "AA:BB:CC:DD:EE:FF"
+	a := &app{cfg: cfg, client: trmnl.New(), cache: cache.Store{Dir: filepath.Join(dir, "cache")},
+		historyPath: filepath.Join(dir, "history.json"), batteryPath: filepath.Join(dir, "battery.json"),
+		ctx: context.Background(), emit: o.emit}
+
+	fetch := func(advance bool) sentImage {
+		t.Helper()
+		if ok, _ := a.fetch(trigger{advance: advance, reason: "test"}); !ok {
+			t.Fatalf("fetch failed: %v", o.of(msgError))
+		}
+		im, _ := lastImage(t, o)
+		return im
+	}
+
+	// A new image with its taps.
+	srv.show("a.png", oneTapJSON, "page1")
+	first := fetch(true)
+	if len(first.Taps) != 1 || first.Taps[0].Key != "t:41" || first.TapScreen != "page1" || first.Cached {
+		t.Fatalf("new image: %+v", first)
+	}
+
+	// The server confirms the same image (304) and sends fresh taps for it.
+	srv.show("a.png", strings.Replace(oneTapJSON, "t:41", "t:42", 1), "page1")
+	same := fetch(false)
+	if same.Path != first.Path || len(same.Taps) != 1 || same.Taps[0].Key != "t:42" {
+		t.Fatalf("unchanged image: %+v (first %+v)", same, first)
+	}
+
+	// A different image without taps, then a cached start-up style resend of
+	// the earlier one: neither carries the taps of the image before it.
+	srv.show("b.png", "", "")
+	next := fetch(true)
+	if next.Path == first.Path || len(next.Taps) != 0 || next.TapScreen != "" {
+		t.Fatalf("image without taps: %+v", next)
+	}
+	entries, err := a.cache.Entries()
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("cache entries = %v, %v", entries, err)
+	}
+	a.showPrevious()
+	prev, raw := lastImage(t, o)
+	if prev.Path != first.Path || len(prev.Taps) != 0 || prev.TapScreen != "" || !strings.Contains(raw, `"taps":[]`) {
+		t.Fatalf("previous image: %s", raw)
+	}
+
+	// Bad taps cost only the taps: the image still shows, with none.
+	srv.show("a.png", `[{"x":"nope"}]`, "page1")
+	bad := fetch(true)
+	if len(bad.Taps) != 0 || bad.TapScreen != "" {
+		t.Fatalf("bad taps: %+v", bad)
+	}
+}
+
+// gatewayStub is the Today gateway behind the proxy the app's gateway uses.
+type gatewayStub struct {
+	*httptest.Server
+	mu      sync.Mutex
+	reqs    []gatewayReq
+	status  int
+	body    string
+	entered chan struct{} // when set, each request signals here ...
+	release chan struct{} // ... and waits for this to be closed
+}
+
+type gatewayReq struct{ method, uri, auth, body string }
+
+func newGatewayStub(t *testing.T, status int, body string) *gatewayStub {
+	t.Helper()
+	g := &gatewayStub{status: status, body: body}
+	g.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		g.mu.Lock()
+		g.reqs = append(g.reqs, gatewayReq{r.Method, r.RequestURI, r.Header.Get("Authorization"), string(b)})
+		status, body, entered, release := g.status, g.body, g.entered, g.release
+		g.mu.Unlock()
+		if entered != nil {
+			entered <- struct{}{}
+			select { // a bounded wait, so a missing guard fails the test instead of hanging it
+			case <-release:
+			case <-time.After(2 * time.Second):
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		io.WriteString(w, body)
+	}))
+	t.Cleanup(g.Close)
+	return g
+}
+
+func (g *gatewayStub) requests() []gatewayReq {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]gatewayReq(nil), g.reqs...)
+}
+
+func (g *gatewayStub) respond(status int, body string) {
+	g.mu.Lock()
+	g.status, g.body = status, body
+	g.mu.Unlock()
+}
+
+// tapApp is an app whose Today gateway goes through stub (the gateway's proxy).
+func tapApp(t *testing.T, stub *gatewayStub) (*app, *outbox) {
+	t.Helper()
+	gw, err := today.NewGateway(today.Config{GatewayURL: "http://mac.test:8090", Proxy: stub.URL,
+		TokenFile: "/unused", Timezone: "UTC"}, "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := &outbox{}
+	return &app{gateway: gw, ctx: context.Background(), triggers: make(chan trigger, 4), emit: o.emit}, o
+}
+
+const goodTap = `{"widget":"demo.tasks","key":"t:41","action":"tick","screen":"page1","title":"Pay rent"}`
+
+func decodeTapResult(t *testing.T, reply string) today.TapResult {
+	t.Helper()
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(reply), &raw); err != nil {
+		t.Fatalf("reply %q: %v", reply, err)
+	}
+	for _, k := range []string{"ok", "message", "outcome", "refresh"} {
+		if _, ok := raw[k]; !ok {
+			t.Fatalf("reply %q has no %q", reply, k)
+		}
+	}
+	var res today.TapResult
+	if err := json.Unmarshal([]byte(reply), &res); err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+func queued(a *app) (trigger, bool) {
+	select {
+	case tr := <-a.triggers:
+		return tr, true
+	default:
+		return trigger{}, false
+	}
+}
+
+func TestMessage20RunsTheActionAnswersOn111AndRefreshesWithoutAdvancing(t *testing.T) {
+	stub := newGatewayStub(t, 200, `{"ok":true,"message":"Ticked","outcome":"done","refresh":true}`)
+	a, o := tapApp(t, stub)
+	var waiting int
+	o.on = func(typ uint32) {
+		if typ == msgTapResult {
+			waiting = len(a.triggers) // the answer goes out before the refresh is queued
+		}
+	}
+	a.handle(protocol.Message{Type: msgTapAct, Contents: goodTap})
+	waitFor(t, "message 111", func() bool { return len(o.of(msgTapResult)) == 1 })
+	waitFor(t, "the refresh", func() bool { return len(a.triggers) == 1 })
+
+	reqs := stub.requests()
+	if len(reqs) != 1 || reqs[0].method != "POST" || reqs[0].uri != "http://mac.test:8090/widgets/demo.tasks/actions/tick" ||
+		reqs[0].auth != "Bearer tok" {
+		t.Fatalf("gateway saw %+v", reqs)
+	}
+	var body map[string]string
+	if err := json.Unmarshal([]byte(reqs[0].body), &body); err != nil || len(body) != 2 || body["key"] != "t:41" || body["screen"] != "page1" {
+		t.Fatalf("gateway body %q: %v", reqs[0].body, err)
+	}
+	res := decodeTapResult(t, o.of(msgTapResult)[0])
+	if !res.OK || res.Message != "Ticked" || res.Outcome != "done" || !res.Refresh {
+		t.Fatalf("111 = %+v", res)
+	}
+	tr, _ := queued(a)
+	if tr.advance || tr.reason != "after action" || waiting != 0 {
+		t.Fatalf("refresh = %+v (queue length at the answer: %d)", tr, waiting)
+	}
+}
+
+func TestATapOutcomeRefreshesOnlyWhenTheScreenIsStaleOrChanged(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		status  int
+		body    string
+		ok      bool
+		outcome string
+		message string
+		refresh bool
+	}{
+		{"done, nothing to redraw", 200, `{"ok":true,"message":"Ticked"}`, true, "ok", "Ticked", true},
+		{"refused: the screen is stale", 409, `{"message":"item gone","outcome":"refused"}`, false, "refused", "item gone", true},
+		{"refused in a 200", 200, `{"ok":false,"message":"nope","outcome":"refused"}`, false, "refused", "nope", true},
+		{"denied", 403, `{"message":"not on this screen","outcome":"denied"}`, false, "denied", "not on this screen", false},
+		{"unknown: the app timed out", 504, `{"outcome":"unknown"}`, false, "unknown", "Unknown — check Pay rent in its app", false},
+		{"not authorised", 401, `{"error":"bad token"}`, false, "error", "Tablet not authorised. Run rm-today-setup.", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			stub := newGatewayStub(t, c.status, c.body)
+			a, o := tapApp(t, stub)
+			a.runTapAct(goodTap)
+			res := decodeTapResult(t, o.of(msgTapResult)[0])
+			if res.OK != c.ok || res.Outcome != c.outcome || res.Message != c.message {
+				t.Fatalf("111 = %+v", res)
+			}
+			tr, got := queued(a)
+			if got != c.refresh || (got && (tr.advance || tr.reason != "after action")) {
+				t.Fatalf("refresh queued = %v %+v, want %v", got, tr, c.refresh)
+			}
+			if len(stub.requests()) != 1 {
+				t.Fatalf("the gateway saw %d requests", len(stub.requests()))
+			}
+		})
+	}
+}
+
+func TestATapActionThatFailsToReachTheGatewayDoesNotRefresh(t *testing.T) {
+	stub := newGatewayStub(t, 200, `{}`)
+	a, o := tapApp(t, stub)
+	stub.Close() // the proxy is gone: tailscaled is not running
+	a.runTapAct(goodTap)
+	res := decodeTapResult(t, o.of(msgTapResult)[0])
+	if res.OK || res.Outcome != "error" || res.Message != "Tailscale isn't running on the tablet" || res.Refresh {
+		t.Fatalf("111 = %+v", res)
+	}
+	if _, got := queued(a); got {
+		t.Fatal("a refresh was queued for an action that never left the tablet")
+	}
+}
+
+func TestMessage20WithABadRequestSendsNothing(t *testing.T) {
+	long := strings.Repeat("k", 501)
+	for name, req := range map[string]string{
+		"not json":          `{`,
+		"empty":             `{}`,
+		"no key":            `{"widget":"demo.tasks","action":"tick","screen":"page1"}`,
+		"key too long":      `{"widget":"demo.tasks","key":"` + long + `","action":"tick","screen":"page1"}`,
+		"title too long":    `{"widget":"demo.tasks","key":"k","action":"tick","screen":"page1","title":"` + long + `"}`,
+		"no widget":         `{"key":"k","action":"tick","screen":"page1"}`,
+		"widget not app.id": `{"widget":"tasks","key":"k","action":"tick","screen":"page1"}`,
+		"widget upper case": `{"widget":"Demo.tasks","key":"k","action":"tick","screen":"page1"}`,
+		"widget path":       `{"widget":"demo.tasks/../x","key":"k","action":"tick","screen":"page1"}`,
+		"action with space": `{"widget":"demo.tasks","key":"k","action":"do it","screen":"page1"}`,
+		"action path":       `{"widget":"demo.tasks","key":"k","action":"../x","screen":"page1"}`,
+		"no action":         `{"widget":"demo.tasks","key":"k","screen":"page1"}`,
+		"no screen":         `{"widget":"demo.tasks","key":"k","action":"tick"}`,
+		"screen with dash":  `{"widget":"demo.tasks","key":"k","action":"tick","screen":"page-1"}`,
+		"key is a number":   `{"widget":"demo.tasks","key":5,"action":"tick","screen":"page1"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := newGatewayStub(t, 200, `{"ok":true}`)
+			a, o := tapApp(t, stub)
+			a.runTapAct(req)
+			res := decodeTapResult(t, o.of(msgTapResult)[0])
+			if res.OK || res.Message != "bad action request" || res.Outcome != "" || res.Refresh {
+				t.Fatalf("111 = %+v", res)
+			}
+			if n := len(stub.requests()); n != 0 {
+				t.Fatalf("the gateway saw %d requests", n)
+			}
+			if _, got := queued(a); got {
+				t.Fatal("a refresh was queued")
+			}
+		})
+	}
+}
+
+func TestMessage20WithoutAGatewayExplainsAndSendsNothing(t *testing.T) {
+	stub := newGatewayStub(t, 200, `{"ok":true}`) // never reached: the app has no gateway
+	for name, c := range map[string]struct{ problem, want string }{
+		"no Today config": {"", "Actions need the Today gateway configured"},
+		"a broken config": {"today.json: proxy is required", "Actions need the Today gateway configured (today.json: proxy is required)"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			o := &outbox{}
+			a := &app{todayProblem: c.problem, ctx: context.Background(), triggers: make(chan trigger, 4), emit: o.emit}
+			a.handle(protocol.Message{Type: msgTapAct, Contents: goodTap})
+			waitFor(t, "message 111", func() bool { return len(o.of(msgTapResult)) == 1 })
+			res := decodeTapResult(t, o.of(msgTapResult)[0])
+			if res.OK || res.Message != c.want || res.Refresh {
+				t.Fatalf("111 = %+v", res)
+			}
+			if _, got := queued(a); got {
+				t.Fatal("a refresh was queued")
+			}
+		})
+	}
+	if n := len(stub.requests()); n != 0 {
+		t.Fatalf("the gateway saw %d requests", n)
+	}
+}
+
+func TestASecondTapWhileOneIsInFlightIsBusyAndNotSent(t *testing.T) {
+	stub := newGatewayStub(t, 200, `{"ok":true,"message":"Ticked","refresh":true}`)
+	stub.entered, stub.release = make(chan struct{}, 4), make(chan struct{})
+	a, o := tapApp(t, stub)
+
+	first := make(chan string, 1)
+	go func() {
+		reply, _ := a.tapAct(context.Background(), goodTap)
+		first <- reply
+	}()
+	<-stub.entered // the first action is now at the gateway
+
+	reply, refresh := a.tapAct(context.Background(), goodTap)
+	res := decodeTapResult(t, reply)
+	if res.OK || res.Outcome != "busy" || res.Message != "Another action is in progress" || res.Refresh || refresh {
+		t.Fatalf("busy reply = %+v (refresh %v)", res, refresh)
+	}
+	// Through the message path too: the answer is on 111 and nothing is queued.
+	a.handle(protocol.Message{Type: msgTapAct, Contents: goodTap})
+	waitFor(t, "the busy answer", func() bool { return len(o.of(msgTapResult)) == 1 })
+	if r := decodeTapResult(t, o.of(msgTapResult)[0]); r.Outcome != "busy" {
+		t.Fatalf("111 = %+v", r)
+	}
+	if _, got := queued(a); got {
+		t.Fatal("a refresh was queued for a tap that was never sent")
+	}
+	if n := len(stub.requests()); n != 1 {
+		t.Fatalf("the gateway saw %d requests while one was in flight", n)
+	}
+
+	close(stub.release)
+	if res := decodeTapResult(t, <-first); !res.OK {
+		t.Fatalf("the first action = %+v", res)
+	}
+
+	// The guard is released: the next tap goes through.
+	if res := decodeTapResult(t, mustReply(a.tapAct(context.Background(), goodTap))); !res.OK {
+		t.Fatalf("a tap after the first finished = %+v", res)
+	}
+	if n := len(stub.requests()); n != 2 {
+		t.Fatalf("the gateway saw %d requests, want 2", n)
+	}
+}
+
+func mustReply(reply string, _ bool) string { return reply }

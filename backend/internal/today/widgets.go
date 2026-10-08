@@ -20,7 +20,7 @@ const (
 	maxRows    = 24
 )
 
-var knownViews = map[string]bool{"stat": true, "list": true, "spark": true, "alert": true}
+var knownViews = map[string]bool{"stat": true, "list": true, "spark": true, "alert": true, "metrics": true}
 
 // WidgetsSource is the whole Today screen: the gateway's layout for this
 // screen and the data of every widget placed on it. Widgets and the apps
@@ -71,12 +71,13 @@ type catalogAction struct {
 }
 
 type widgetData struct {
-	AsOf  string     `json:"as_of"`
-	Tone  string     `json:"tone,omitempty"`
-	Stat  *statView  `json:"stat,omitempty"`
-	List  *listView  `json:"list,omitempty"`
-	Spark *sparkView `json:"spark,omitempty"`
-	Alert *Alert     `json:"alert,omitempty"`
+	AsOf    string       `json:"as_of"`
+	Tone    string       `json:"tone,omitempty"`
+	Stat    *statView    `json:"stat,omitempty"`
+	List    *listView    `json:"list,omitempty"`
+	Spark   *sparkView   `json:"spark,omitempty"`
+	Alert   *Alert       `json:"alert,omitempty"`
+	Metrics *metricsView `json:"metrics,omitempty"`
 }
 
 type statView struct {
@@ -102,6 +103,17 @@ type listItem struct {
 	Detail   string   `json:"detail,omitempty"`
 	Tone     string   `json:"tone,omitempty"`
 	Actions  []string `json:"actions,omitempty"`
+}
+
+type metricsView struct {
+	Rows []metricRow `json:"rows"`
+}
+
+type metricRow struct {
+	Label  string `json:"label"`
+	Value  string `json:"value"`
+	Detail string `json:"detail,omitempty"`
+	Tone   string `json:"tone,omitempty"`
 }
 
 type sparkView struct {
@@ -229,6 +241,8 @@ func buildCell(p placement, widgets map[string]widgetEntry, now time.Time, loc *
 		if d.Alert != nil {
 			c.Alert = &Alert{Text: d.Alert.Text, Tone: tone(d.Alert.Tone)}
 		}
+	case "metrics":
+		c.Metrics = buildMetrics(d.Metrics)
 	}
 	return c
 }
@@ -268,6 +282,44 @@ func buildStat(v *statView) *Stat {
 		s.Trend = "up"
 	case strings.HasPrefix(d, "-"), strings.HasPrefix(d, "−"):
 		s.Trend = "down"
+	}
+	return s
+}
+
+// The metrics contract: one to eight rows, each with a label and a value, and
+// strings of at most 500 characters.
+const (
+	maxMetricRows = 8
+	maxMetricStr  = 500
+)
+
+// buildMetrics keeps the rows the contract allows, in order: a row without a
+// label or a value has nothing to show and is left out, and no more than eight
+// are kept. A view with no row left is no view.
+func buildMetrics(v *metricsView) *Metrics {
+	if v == nil {
+		return nil
+	}
+	m := &Metrics{Rows: []MetricRow{}}
+	for _, r := range v.Rows {
+		if r.Label == "" || r.Value == "" {
+			continue
+		}
+		if len(m.Rows) == maxMetricRows {
+			break
+		}
+		m.Rows = append(m.Rows, MetricRow{Label: clip(r.Label), Value: clip(r.Value), Detail: clip(r.Detail), Tone: tone(r.Tone)})
+	}
+	if len(m.Rows) == 0 {
+		return nil
+	}
+	return m
+}
+
+// clip cuts s to maxMetricStr characters.
+func clip(s string) string {
+	if r := []rune(s); len(r) > maxMetricStr {
+		return string(r[:maxMetricStr])
 	}
 	return s
 }
@@ -391,19 +443,76 @@ func (WidgetsSource) Act(ctx context.Context, c Client, action string, ref ItemR
 	if !offers(ref["actions"], action) {
 		return ActResult{}, errors.New("this item doesn't offer that action")
 	}
+	res, _, err := postAction(ctx, c, ref["widget"], action, ref["key"], screenName, ref["title"])
+	return res, err
+}
+
+// postAction is the gateway call behind every action, whichever screen it
+// comes from. The second result is the gateway's own word for what happened
+// ("refused", "denied", "unknown"), or one worked out from a failure that
+// carried none.
+func postAction(ctx context.Context, c Client, widget, action, key, screen, title string) (ActResult, string, error) {
 	var resp struct {
 		OK      bool   `json:"ok"`
 		Message string `json:"message"`
 		Refresh bool   `json:"refresh"`
+		Outcome string `json:"outcome"`
 	}
-	path := "/widgets/" + url.PathEscape(ref["widget"]) + "/actions/" + url.PathEscape(action)
-	if err := c.Post(ctx, path, map[string]string{"key": ref["key"], "screen": screenName}, &resp); err != nil {
-		return actFailed(err, ref["title"])
+	path := "/widgets/" + url.PathEscape(widget) + "/actions/" + url.PathEscape(action)
+	if err := c.Post(ctx, path, map[string]string{"key": key, "screen": screen}, &resp); err != nil {
+		res, err2 := actFailed(err, title)
+		return res, failureOutcome(err), err2
 	}
 	if !resp.OK {
-		return ActResult{Refetch: true}, errors.New(orElse(resp.Message, "The app refused this"))
+		return ActResult{Refetch: true}, orElse(resp.Outcome, "refused"), errors.New(orElse(resp.Message, "The app refused this"))
 	}
-	return ActResult{Refetch: resp.Refresh, Message: orElse(resp.Message, "Done")}, nil
+	return ActResult{Refetch: resp.Refresh, Message: orElse(resp.Message, "Done")}, orElse(resp.Outcome, "ok"), nil
+}
+
+// failureOutcome is the outcome of a call that failed: the gateway's, when its
+// answer named one; "unknown" when the action may have run; "error" when it
+// never left the tablet or was turned away without one.
+func failureOutcome(err error) string {
+	var he *HTTPError
+	switch {
+	case errors.Is(err, ErrTailscaleDown):
+		return "error"
+	case !errors.As(err, &he):
+		return "unknown"
+	case he.Outcome != "":
+		return he.Outcome
+	case he.Status == http.StatusConflict:
+		return "refused"
+	case he.Status == http.StatusForbidden:
+		return "denied"
+	case he.Status >= 502 && he.Status <= 504:
+		return "unknown"
+	default:
+		return "error"
+	}
+}
+
+// TapResult is how a tap on the BYOS image's region went: message 111.
+// Refresh means the screen the tap came from is out of date.
+type TapResult struct {
+	OK      bool   `json:"ok"`
+	Message string `json:"message"`
+	Outcome string `json:"outcome"`
+	Refresh bool   `json:"refresh"`
+}
+
+// TapAct runs an action chosen on a tap region of the server-rendered image.
+// It is Act for that screen: the same gateway call, the same wording for a
+// refusal, a denial or an unknown outcome, and nothing sent twice. The gateway
+// is what checks the widget, key and screen; this only builds the call, so the
+// caller validates the ids first. title names the item in an "unknown" answer
+// (the widget id when empty).
+func TapAct(ctx context.Context, c Client, widget, key, action, screen, title string) TapResult {
+	res, outcome, err := postAction(ctx, c, widget, action, key, screen, orElse(title, widget))
+	if err != nil {
+		return TapResult{OK: false, Message: UserMessage(err), Outcome: outcome, Refresh: res.Refetch}
+	}
+	return TapResult{OK: true, Message: res.Message, Outcome: outcome, Refresh: res.Refetch}
 }
 
 // actFailed words a failed action (spec Appendix A3). A refusal (409) or an

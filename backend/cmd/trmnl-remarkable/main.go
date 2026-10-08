@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -61,6 +62,7 @@ const (
 	msgSaveBrightnessSchedule uint32 = 17
 	msgTodayRefresh           uint32 = 18
 	msgTodayAct               uint32 = 19
+	msgTapAct                 uint32 = 20
 	msgState                  uint32 = 101
 	msgImage                  uint32 = 102
 	msgStatus                 uint32 = 103
@@ -69,6 +71,7 @@ const (
 	msgTestResult             uint32 = 106
 	msgDiagnosticsResult      uint32 = 107
 	msgBatteryTest            uint32 = 108
+	msgTapResult              uint32 = 111
 )
 
 type historyEntry struct {
@@ -108,7 +111,20 @@ type app struct {
 	brightnessScheduleChanged        chan struct{}
 	today                            *today.Engine
 	todayProblem                     string
-	todayCache                       string // set whether or not Today is on
+	todayCache                       string               // set whether or not Today is on
+	gateway                          today.Client         // nil when Today has no usable gateway
+	taps                             tapState             // guarded by mu
+	tapBusy                          atomic.Bool          // a tap action is in flight
+	emit                             func(uint32, string) // tests only: stands in for the AppLoad connection
+}
+
+// tapState is the tap list that came with one image. It is keyed by the cache
+// path of that image, so a screen shown from anywhere else (cache at start-up,
+// settings save, Previous) never carries taps that belong to a different one.
+type tapState struct {
+	path   string
+	taps   []trmnl.Tap
+	screen string
 }
 
 func main() {
@@ -204,7 +220,7 @@ func main() {
 	go a.batterySampler()
 	go a.updateWatcher()
 	a.todayCache = todayCachePath(home)
-	a.today, a.todayProblem = openToday(ctx, home, a.send)
+	a.today, a.gateway, a.todayProblem = openToday(ctx, home, a.send)
 	if e, ok := a.cache.Latest(); ok && cfg.StartWithCacheOffline {
 		a.sendImage(e, true)
 	}
@@ -225,37 +241,38 @@ func main() {
 }
 
 // openToday starts the Today view when today.json exists. A missing file is
-// not an error: Today just says it isn't set up. The second result is the
+// not an error: Today just says it isn't set up. The last result is the
 // problem to show when the file exists but cannot be used; it never contains
-// the token.
-func openToday(ctx context.Context, home string, emit today.Emitter) (*today.Engine, string) {
+// the token. The gateway comes back too (nil whenever there is none), because
+// tap actions on the BYOS image use it directly.
+func openToday(ctx context.Context, home string, emit today.Emitter) (*today.Engine, today.Client, string) {
 	dir := filepath.Join(home, ".config", "trmnl-remarkable")
 	cfg, err := today.LoadConfig(filepath.Join(dir, "today.json"))
 	if errors.Is(err, today.ErrNotConfigured) {
-		return nil, ""
+		return nil, nil, ""
 	}
 	if err != nil {
 		log.Printf("today: %v", err)
-		return nil, err.Error()
+		return nil, nil, err.Error()
 	}
 	token, err := today.ReadToken(cfg.TokenFile)
 	if err != nil {
 		log.Printf("today: token: %v", err)
-		return nil, err.Error()
+		return nil, nil, err.Error()
 	}
 	gw, err := today.NewGateway(cfg, token)
 	if err != nil {
 		log.Printf("today: %v", err)
-		return nil, err.Error()
+		return nil, nil, err.Error()
 	}
 	sources, unknown := today.Enabled(cfg.Sections)
 	for _, u := range unknown {
 		log.Printf("today: unknown section %q ignored", u)
 	}
 	if len(sources) == 0 {
-		return nil, "today.json: no known sections"
+		return nil, nil, "today.json: no known sections"
 	}
-	return today.New(ctx, gw, sources, cfg.Location(), todayCachePath(home), emit, time.Now), ""
+	return today.New(ctx, gw, sources, cfg.Location(), todayCachePath(home), emit, time.Now), gw, ""
 }
 
 // todayCachePath is where Today keeps its last good data, wherever it is set up.
@@ -316,6 +333,64 @@ func (a *app) todayAct(contents string) string {
 	}
 	a.today.Act(v.Section, v.Rev, v.Action, v.Key)
 	return ""
+}
+
+// tapActRequest is message 20: a button chosen on a tap region of the image.
+// Title is optional and only words an "unknown" answer.
+type tapActRequest struct {
+	Widget string `json:"widget"`
+	Key    string `json:"key"`
+	Action string `json:"action"`
+	Screen string `json:"screen"`
+	Title  string `json:"title"`
+}
+
+// valid reports whether the request is shaped like something the gateway could
+// have offered. The gateway still decides whether it is allowed.
+func (r tapActRequest) valid() bool {
+	return trmnl.WidgetIDPattern.MatchString(r.Widget) &&
+		trmnl.ActionIDPattern.MatchString(r.Action) &&
+		trmnl.ScreenPattern.MatchString(r.Screen) &&
+		r.Key != "" && len([]rune(r.Key)) <= trmnl.MaxTapString &&
+		len([]rune(r.Title)) <= trmnl.MaxTapString
+}
+
+// tapAct handles message 20 and returns the message 111 to send. refresh says
+// the screen on the tablet is out of date (the action ran, or the gateway said
+// the screen is stale), so the caller refetches it. Only one action is in
+// flight at a time: a second tap is answered "busy" and never sent.
+func (a *app) tapAct(ctx context.Context, contents string) (reply string, refresh bool) {
+	say := func(message, outcome string) string {
+		return mustJSON(today.TapResult{OK: false, Message: message, Outcome: outcome})
+	}
+	var v tapActRequest
+	if err := json.Unmarshal([]byte(contents), &v); err != nil || !v.valid() {
+		return say("bad action request", ""), false
+	}
+	if a.gateway == nil {
+		message := "Actions need the Today gateway configured"
+		if a.todayProblem != "" {
+			message += " (" + a.todayProblem + ")"
+		}
+		return say(message, ""), false
+	}
+	if !a.tapBusy.CompareAndSwap(false, true) {
+		return say("Another action is in progress", "busy"), false
+	}
+	defer a.tapBusy.Store(false)
+	res := today.TapAct(ctx, a.gateway, v.Widget, v.Key, v.Action, v.Screen, v.Title)
+	return mustJSON(res), res.OK || res.Refresh
+}
+
+// runTapAct answers a tap action on 111, then asks for a non-advancing refresh
+// when the screen changed: the same fetch "Refresh now" starts, which does not
+// move the playlist on.
+func (a *app) runTapAct(contents string) {
+	reply, refresh := a.tapAct(a.ctx, contents)
+	a.send(msgTapResult, reply)
+	if refresh {
+		a.queue(trigger{advance: false, reason: "after action"})
+	}
 }
 
 func (a *app) handle(m protocol.Message) {
@@ -391,6 +466,9 @@ func (a *app) handle(m protocol.Message) {
 		if reply := a.todayAct(m.Contents); reply != "" {
 			a.send(today.MsgActResult, reply)
 		}
+	case msgTapAct:
+		// The gateway call can take its whole timeout: keep the receive loop free.
+		go a.runTapAct(m.Contents)
 	case msgClearCache:
 		_ = a.cache.Clear()
 		a.clearToday()
@@ -660,8 +738,9 @@ func (a *app) fetch(t trigger) (bool, time.Duration) {
 		etag, lastModified = latest.ETag, latest.LastModified
 	}
 	timeout := time.Duration(int(r.ImageURLTimeout)) * time.Second
-	body, h, err := a.client.Download(a.ctx, r.ImageURL, timeout, etag, lastModified)
+	body, h, err := a.client.Download(a.ctx, cfg, r.ImageURL, timeout, etag, lastModified)
 	if errors.Is(err, trmnl.ErrNotModified) && has {
+		a.setTaps(latest.Path, r.Taps, r.TapScreen) // the same image, with this answer's taps
 		a.sendImage(latest, false)
 		a.sendState()
 		a.record(t.reason, true, "unchanged; server confirmed cached image")
@@ -695,6 +774,7 @@ func (a *app) fetch(t trigger) (bool, time.Duration) {
 		a.sendError("Could not cache image", err)
 		return false, 0
 	}
+	a.setTaps(entry.Path, r.Taps, r.TapScreen)
 	a.sendImage(entry, false)
 	a.sendState()
 	detail := "displayed " + filepath.Base(entry.Path)
@@ -804,7 +884,28 @@ func (a *app) sendImage(e cache.Entry, cached bool) {
 			log.Printf("render failed, showing the original screen: %v", err)
 		}
 	}
-	a.send(msgImage, mustJSON(map[string]any{"path": "file://" + path, "cached": cached, "saved_at": e.SavedAt}))
+	taps, screen := a.tapsFor(e.Path)
+	a.send(msgImage, mustJSON(map[string]any{"path": "file://" + path, "cached": cached, "saved_at": e.SavedAt, "taps": taps, "tap_screen": screen}))
+}
+
+// setTaps remembers the taps that arrived with the image cached at path,
+// replacing those of the image before it.
+func (a *app) setTaps(path string, taps []trmnl.Tap, screen string) {
+	a.mu.Lock()
+	a.taps = tapState{path: path, taps: taps, screen: screen}
+	a.mu.Unlock()
+}
+
+// tapsFor is the tap list for the image cached at path: the held one only when
+// it came with that exact image, otherwise an empty list (never nil, so the
+// view gets [] and not null) and no screen.
+func (a *app) tapsFor(path string) ([]trmnl.Tap, string) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if path == "" || a.taps.path != path || len(a.taps.taps) == 0 {
+		return []trmnl.Tap{}, ""
+	}
+	return a.taps.taps, a.taps.screen
 }
 func (a *app) sendStatus(s string) { a.send(msgStatus, mustJSON(map[string]string{"message": s})) }
 func (a *app) sendError(prefix string, err error) {
@@ -812,6 +913,10 @@ func (a *app) sendError(prefix string, err error) {
 	a.send(msgError, mustJSON(map[string]string{"message": prefix + ": " + safeError(err)}))
 }
 func (a *app) send(typ uint32, s string) {
+	if a.emit != nil {
+		a.emit(typ, s)
+		return
+	}
 	if err := a.conn.Send(typ, s); err != nil && a.ctx.Err() == nil {
 		log.Printf("send failed: %v", err)
 	}

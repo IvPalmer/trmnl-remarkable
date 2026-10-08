@@ -136,24 +136,95 @@ func TestRejectsUnsafeServerURLFeatures(t *testing.T) {
 	}
 }
 
-func TestValidateRemoteURLAllowsHTTPSImagesAndLoopbackMock(t *testing.T) {
-	for _, raw := range []string{
-		"https://cdn.example.test/screens/a.png?token=opaque",
-		"http://127.0.0.1:9988/image/test.png",
-		"http://[::1]:9988/image/test.png",
-	} {
-		if err := ValidateRemoteURL(raw); err != nil {
-			t.Fatalf("ValidateRemoteURL(%q): %v", raw, err)
+func TestValidateDashboardURL(t *testing.T) {
+	tests := []struct {
+		url              string
+		plain, withProxy bool // accepted without a proxy / with one
+	}{
+		{"https://cdn.example.test/screens/a.png?token=opaque", true, true},
+		{"https://x.ts.net", true, true},
+		{"http://127.0.0.1:9988/image/test.png", true, true},
+		{"http://[::1]:9988/image/test.png", true, true},
+		{"http://localhost:3000", true, true},
+		{"http://x.ts.net", false, true},
+		{"http://X.Example.TS.NET:3000/api", false, true},
+		{"http://100.100.1.1", false, true},
+		{"http://100.64.0.1:8080", false, true},
+		{"http://100.127.255.254", false, true},
+		{"http://100.63.255.255", false, false},
+		{"http://100.63.0.1", false, false},
+		{"http://100.128.0.1", false, false},
+		{"http://example.com", false, false},
+		{"http://ts.net", false, false},
+		{"http://.ts.net", false, false},
+		{"http://.x.ts.net", false, false},
+		{"http://x..ts.net", false, false},
+		{"http://evil-ts.net", false, false},
+		{"http://x.ts.net.example.com", false, false},
+		{"http://192.0.2.20/image.png", false, false},
+		{"http://198.51.100.5", false, false},
+		{"ftp://x.ts.net/image.png", false, false},
+		{"//example.test/image.png", false, false},
+		{"http://user:pass@x.ts.net", false, false},
+		{"https://user:pass@example.test", false, false},
+		{"", false, false},
+	}
+	for _, tc := range tests {
+		for _, proxied := range []bool{false, true} {
+			want := tc.plain
+			if proxied {
+				want = tc.withProxy
+			}
+			if err := ValidateDashboardURL(tc.url, proxied); (err == nil) != want {
+				t.Errorf("ValidateDashboardURL(%q, proxied=%v) = %v; accepted should be %v", tc.url, proxied, err, want)
+			}
 		}
 	}
-	for _, raw := range []string{
-		"http://192.168.1.20/image.png",
-		"ftp://example.test/image.png",
-		"//example.test/image.png",
-	} {
-		if err := ValidateRemoteURL(raw); err == nil {
-			t.Fatalf("ValidateRemoteURL accepted %q", raw)
+}
+
+func TestNormalizeProxy(t *testing.T) {
+	for _, proxy := range []string{"http://127.0.0.1:8080", " http://localhost:3128/ ", "http://[::1]:9000"} {
+		c := Defaults()
+		c.Proxy = proxy
+		c.BaseURL = "http://x.ts.net"
+		if err := c.Normalize(); err != nil {
+			t.Errorf("proxy %q refused: %v", proxy, err)
 		}
+		if c.Proxy == "" || c.Proxy[len(c.Proxy)-1] == '/' || c.Proxy[0] == ' ' {
+			t.Errorf("proxy %q was not trimmed: %q", proxy, c.Proxy)
+		}
+	}
+	for _, proxy := range []string{
+		"https://127.0.0.1:8080", "http://127.0.0.1", "http://127.0.0.1:0", "http://127.0.0.1:70000",
+		"http://192.0.2.1:8080", "http://x.ts.net:8080", "http://127.0.0.1:8080/path",
+		"http://127.0.0.1:8080?x=1", "http://user:pw@127.0.0.1:8080", "socks5://127.0.0.1:1080", "127.0.0.1:8080",
+	} {
+		c := Defaults()
+		c.Proxy = proxy
+		if err := c.Normalize(); err == nil {
+			t.Errorf("proxy %q was accepted", proxy)
+		}
+	}
+}
+
+func TestTailnetBaseURLNeedsTheProxy(t *testing.T) {
+	c := Defaults()
+	c.BaseURL = "http://x.ts.net:3000"
+	if err := c.Normalize(); err == nil {
+		t.Fatal("a plain-HTTP tailnet URL was accepted without a proxy")
+	}
+	c.Proxy = "http://127.0.0.1:8080"
+	if err := c.Normalize(); err != nil {
+		t.Fatalf("a tailnet URL behind a loopback proxy was refused: %v", err)
+	}
+	// The proxy survives a save and load.
+	p := filepath.Join(t.TempDir(), "config.json")
+	if err := Save(p, c); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(p)
+	if err != nil || got.Proxy != "http://127.0.0.1:8080" {
+		t.Fatalf("proxy not round-tripped: %q, %v", got.Proxy, err)
 	}
 }
 

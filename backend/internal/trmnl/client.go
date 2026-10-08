@@ -1,15 +1,21 @@
 package trmnl
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"math"
+	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"trmnl-remarkable/backend/internal/config"
@@ -49,6 +55,143 @@ type DisplayResponse struct {
 	UpdateFirmware       bool        `json:"update_firmware"`
 	ResetFirmware        bool        `json:"reset_firmware"`
 	MaximumCompatibility bool        `json:"maximum_compatibility"`
+
+	// Taps and TapScreen are the BYOS extension described in docs/BYOS.md.
+	// They are filled by get after validation, never by the JSON decoder, so a
+	// bad tap list can cost the taps but never the image.
+	Taps      []Tap  `json:"-"`
+	TapScreen string `json:"-"`
+}
+
+// Tap is a region of the image a BYOS server marks as actionable, in pixels of
+// the image it served. Actions are what the server's gateway offers for it.
+type Tap struct {
+	X       int         `json:"x"`
+	Y       int         `json:"y"`
+	W       int         `json:"w"`
+	H       int         `json:"h"`
+	Widget  string      `json:"widget"`
+	Key     string      `json:"key"`
+	Title   string      `json:"title"`
+	Actions []TapAction `json:"actions"`
+}
+
+type TapAction struct {
+	ID      string `json:"id"`
+	Label   string `json:"label"`
+	Confirm string `json:"confirm,omitempty"`
+}
+
+// Limits for a tap list. A list over any of them is dropped whole.
+const (
+	MaxTaps       = 100
+	MaxTapActions = 8
+	MaxTapString  = 500
+	MaxTapCoord   = 10000
+)
+
+var (
+	// WidgetIDPattern, ScreenPattern and ActionIDPattern are the gateway's
+	// own id formats (its widget contract), so nothing else is ever sent back.
+	WidgetIDPattern = regexp.MustCompile(`^[a-z][a-z0-9]{0,15}\.[a-z][a-z0-9_]{0,31}$`)
+	ScreenPattern   = regexp.MustCompile(`^[a-z][a-z0-9]{0,15}$`)
+	ActionIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+)
+
+// rawTap decodes numbers as float64 so that "5" (a string) and 10.5 are
+// distinguishable from the integers the contract asks for; a missing field is
+// nil.
+type rawTap struct {
+	X, Y, W, H *float64
+	Widget     string
+	Key        string
+	Title      string
+	Actions    []TapAction
+}
+
+func tapCoord(v *float64, name string, min int) (int, error) {
+	if v == nil || *v != math.Trunc(*v) || *v < float64(min) || *v > MaxTapCoord {
+		return 0, fmt.Errorf("%s must be an integer from %d to %d", name, min, MaxTapCoord)
+	}
+	return int(*v), nil
+}
+
+func tapString(s, name string) error {
+	if len([]rune(s)) > MaxTapString {
+		return fmt.Errorf("%s is longer than %d characters", name, MaxTapString)
+	}
+	return nil
+}
+
+// parseTaps validates the taps and tap_screen of a display response. An absent
+// or empty list is not an error and yields nothing. Anything else wrong drops
+// the whole list: a half-trusted overlay could send an action for the wrong
+// region.
+func parseTaps(rawTaps, rawScreen json.RawMessage) ([]Tap, string, error) {
+	if len(bytes.TrimSpace(rawTaps)) == 0 || string(bytes.TrimSpace(rawTaps)) == "null" {
+		return nil, "", nil
+	}
+	var in []rawTap
+	if err := json.Unmarshal(rawTaps, &in); err != nil {
+		return nil, "", fmt.Errorf("taps are not a list of tap objects: %w", err)
+	}
+	if len(in) == 0 {
+		return nil, "", nil
+	}
+	if len(in) > MaxTaps {
+		return nil, "", fmt.Errorf("%d taps, at most %d allowed", len(in), MaxTaps)
+	}
+	var screen string
+	if err := json.Unmarshal(rawScreen, &screen); err != nil || !ScreenPattern.MatchString(screen) {
+		return nil, "", errors.New("tap_screen is missing or invalid")
+	}
+	out := make([]Tap, 0, len(in))
+	for i, r := range in {
+		bad := func(err error) ([]Tap, string, error) { return nil, "", fmt.Errorf("tap %d: %w", i, err) }
+		var t Tap
+		var err error
+		if t.X, err = tapCoord(r.X, "x", 0); err != nil {
+			return bad(err)
+		}
+		if t.Y, err = tapCoord(r.Y, "y", 0); err != nil {
+			return bad(err)
+		}
+		if t.W, err = tapCoord(r.W, "w", 1); err != nil {
+			return bad(err)
+		}
+		if t.H, err = tapCoord(r.H, "h", 1); err != nil {
+			return bad(err)
+		}
+		if !WidgetIDPattern.MatchString(r.Widget) {
+			return bad(errors.New("widget is not an app.id"))
+		}
+		if r.Key == "" {
+			return bad(errors.New("key is empty"))
+		}
+		if err := errors.Join(tapString(r.Key, "key"), tapString(r.Title, "title")); err != nil {
+			return bad(err)
+		}
+		if len(r.Actions) > MaxTapActions {
+			return bad(fmt.Errorf("%d actions, at most %d allowed", len(r.Actions), MaxTapActions))
+		}
+		for _, a := range r.Actions {
+			if !ActionIDPattern.MatchString(a.ID) {
+				return bad(errors.New("action id is invalid"))
+			}
+			if a.Label == "" {
+				return bad(errors.New("action label is empty"))
+			}
+			if err := errors.Join(tapString(a.Label, "action label"), tapString(a.Confirm, "action confirm")); err != nil {
+				return bad(err)
+			}
+		}
+		t.Widget, t.Key, t.Title, t.Actions = r.Widget, r.Key, r.Title, r.Actions
+		if t.Actions == nil {
+			t.Actions = []TapAction{}
+		}
+		out = append(out, t)
+	}
+	return out, screen, nil
 }
 
 type Client struct {
@@ -60,6 +203,17 @@ type Client struct {
 	Model   string
 	Battery func() string
 	RSSI    func() string
+
+	mu      sync.Mutex
+	proxied *proxiedTransport
+}
+
+// proxiedTransport is the transport used while a proxy is configured. It is
+// kept between calls so keep-alive connections are reused, and rebuilt when
+// the proxy setting changes.
+type proxiedTransport struct {
+	proxy string
+	rt    http.RoundTripper
 }
 
 func New() *Client {
@@ -80,14 +234,83 @@ func secureRedirect(req *http.Request, via []*http.Request) error {
 	return nil
 }
 
-func secureImageRedirect(req *http.Request, via []*http.Request) error {
-	if len(via) >= 10 {
-		return errors.New("too many redirects")
+// originOf is scheme://host:port with the default port made explicit, so
+// "https://x" and "https://x:443" are the same origin.
+func originOf(u *url.URL) string {
+	scheme := strings.ToLower(u.Scheme)
+	port := u.Port()
+	if port == "" {
+		switch scheme {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		}
 	}
-	if err := config.ValidateRemoteURL(req.URL.String()); err != nil {
-		return fmt.Errorf("unsafe image redirect: %w", err)
+	return scheme + "://" + net.JoinHostPort(strings.ToLower(u.Hostname()), port)
+}
+
+// SameOrigin reports whether two URLs share scheme, host and port.
+func SameOrigin(a, b string) bool {
+	ua, errA := url.Parse(strings.TrimSpace(a))
+	ub, errB := url.Parse(strings.TrimSpace(b))
+	return errA == nil && errB == nil && ua.Hostname() != "" && ub.Hostname() != "" && originOf(ua) == originOf(ub)
+}
+
+const tokenHeader = "access-token"
+
+// imageRedirectPolicy checks every hop of an image download against the
+// transport rules and takes the credential off every hop once the chain has
+// left the dashboard's origin, including a later hop that comes back to it:
+// Go copies the first request's custom headers onto each hop, so the token
+// must be dropped again on each one.
+func imageRedirectPolicy(cfg config.Config) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("too many redirects")
+		}
+		if err := config.ValidateDashboardURL(req.URL.String(), cfg.Proxy != ""); err != nil {
+			return fmt.Errorf("unsafe image redirect: %w", err)
+		}
+		left := !SameOrigin(cfg.BaseURL, req.URL.String())
+		for _, prev := range via {
+			left = left || !SameOrigin(cfg.BaseURL, prev.URL.String())
+		}
+		if left {
+			req.Header.Del(tokenHeader)
+		}
+		return nil
 	}
-	return nil
+}
+
+// httpFor returns the client to use for one call under cfg. Without a proxy
+// that is the shared client. With one, a copy whose transport goes through it;
+// config can change while the app runs, so this is decided per call.
+func (c *Client) httpFor(cfg config.Config) *http.Client {
+	if cfg.Proxy == "" {
+		return c.HTTP
+	}
+	proxyURL, err := url.Parse(cfg.Proxy)
+	if err != nil {
+		return c.HTTP
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.proxied == nil || c.proxied.proxy != cfg.Proxy {
+		var t *http.Transport
+		if base, ok := c.HTTP.Transport.(*http.Transport); ok {
+			t = base.Clone()
+		} else if def, ok := http.DefaultTransport.(*http.Transport); ok {
+			t = def.Clone()
+		} else {
+			t = &http.Transport{}
+		}
+		t.Proxy = http.ProxyURL(proxyURL)
+		c.proxied = &proxiedTransport{proxy: cfg.Proxy, rt: t}
+	}
+	h := *c.HTTP
+	h.Transport = c.proxied.rt
+	return &h
 }
 
 func (c *Client) Display(ctx context.Context, cfg config.Config, advance bool) (DisplayResponse, error) {
@@ -154,7 +377,7 @@ func (c *Client) get(ctx context.Context, cfg config.Config, path string) (Displ
 			req.Header.Set("rssi", v)
 		}
 	}
-	r, err := c.HTTP.Do(req)
+	r, err := c.httpFor(cfg).Do(req)
 	if err != nil {
 		return DisplayResponse{}, err
 	}
@@ -163,9 +386,23 @@ func (c *Client) get(ctx context.Context, cfg config.Config, path string) (Displ
 		b, _ := io.ReadAll(io.LimitReader(r.Body, 1024))
 		return DisplayResponse{}, &HTTPError{Status: r.StatusCode, Body: string(b), RetryAfter: parseRetryAfter(r.Header.Get("Retry-After"), time.Now())}
 	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		return DisplayResponse{}, fmt.Errorf("read display response: %w", err)
+	}
 	var out DisplayResponse
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&out); err != nil {
+	if err := json.Unmarshal(body, &out); err != nil {
 		return out, fmt.Errorf("decode display response: %w", err)
+	}
+	var extra struct {
+		Taps      json.RawMessage `json:"taps"`
+		TapScreen json.RawMessage `json:"tap_screen"`
+	}
+	if err := json.Unmarshal(body, &extra); err == nil {
+		var terr error
+		if out.Taps, out.TapScreen, terr = parseTaps(extra.Taps, extra.TapScreen); terr != nil {
+			log.Printf("trmnl: taps ignored, image kept: %v", terr)
+		}
 	}
 	if out.ImageURL == "" {
 		return out, errors.New("display response contained no image_url")
@@ -176,8 +413,11 @@ func (c *Client) get(ctx context.Context, cfg config.Config, path string) (Displ
 	return out, nil
 }
 
-func (c *Client) Download(ctx context.Context, imageURL string, timeout time.Duration, etag, lastModified string) (io.ReadCloser, http.Header, error) {
-	if err := config.ValidateRemoteURL(imageURL); err != nil {
+// Download fetches an image. It goes through cfg.Proxy when one is set, and
+// sends the API key only when the image is on the dashboard's own origin
+// (scheme, host and port of cfg.BaseURL), including after a redirect.
+func (c *Client) Download(ctx context.Context, cfg config.Config, imageURL string, timeout time.Duration, etag, lastModified string) (io.ReadCloser, http.Header, error) {
+	if err := config.ValidateDashboardURL(imageURL, cfg.Proxy != ""); err != nil {
 		return nil, nil, fmt.Errorf("image URL: %w", err)
 	}
 	if timeout <= 0 || timeout > 2*time.Minute {
@@ -190,14 +430,17 @@ func (c *Client) Download(ctx context.Context, imageURL string, timeout time.Dur
 		cancel()
 		return nil, nil, err
 	}
+	if cfg.APIKey != "" && SameOrigin(cfg.BaseURL, imageURL) {
+		req.Header.Set(tokenHeader, cfg.APIKey)
+	}
 	if etag != "" {
 		req.Header.Set("If-None-Match", etag)
 	}
 	if lastModified != "" {
 		req.Header.Set("If-Modified-Since", lastModified)
 	}
-	downloadClient := *c.HTTP
-	downloadClient.CheckRedirect = secureImageRedirect
+	downloadClient := *c.httpFor(cfg)
+	downloadClient.CheckRedirect = imageRedirectPolicy(cfg)
 	r, err := downloadClient.Do(req)
 	if err != nil {
 		cancel()

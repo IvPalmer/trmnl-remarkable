@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -54,6 +55,12 @@ type Config struct {
 	// UpdateCheck contacts the GitHub releases API. It is off by default because
 	// it is the only outbound request not directed at the configured dashboard.
 	UpdateCheck bool `json:"update_check"`
+
+	// Proxy is an http:// URL to a loopback host and port (for example a
+	// tailnet-aware forwarder on the tablet). When it is set, the display API
+	// and image requests go through it, and the dashboard URL may be plain
+	// http:// to a tailnet host (see ValidateDashboardURL).
+	Proxy string `json:"proxy,omitempty"`
 }
 
 // DefaultDitherPalette approximates the Paper Pro colour panel. Override it in
@@ -162,7 +169,13 @@ func (c *Config) Normalize() error {
 	if c.BaseURL == "" {
 		c.BaseURL = DefaultBaseURL
 	}
-	if err := ValidateRemoteURL(c.BaseURL); err != nil {
+	c.Proxy = strings.TrimRight(strings.TrimSpace(c.Proxy), "/")
+	if c.Proxy != "" {
+		if err := validateProxyURL(c.Proxy); err != nil {
+			return fmt.Errorf("proxy: %w", err)
+		}
+	}
+	if err := ValidateDashboardURL(c.BaseURL, c.Proxy != ""); err != nil {
 		return fmt.Errorf("server URL: %w", err)
 	}
 	u, _ := url.Parse(c.BaseURL)
@@ -258,10 +271,34 @@ func ParseHexColor(value string) (r, g, b uint8, err error) {
 	return uint8(n >> 16), uint8(n >> 8), uint8(n), nil
 }
 
-// ValidateRemoteURL applies the transport policy shared by Device API and
+// isLoopbackHost reports whether host names this device: "localhost" or a
+// loopback IP address.
+func isLoopbackHost(host string) bool {
+	ip := net.ParseIP(host)
+	return strings.EqualFold(host, "localhost") || ip != nil && ip.IsLoopback()
+}
+
+// tailnetRange is the carrier-grade NAT block Tailscale assigns addresses from.
+var tailnetRange = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+
+// isTailnetHost reports whether host is a MagicDNS name (one or more labels
+// before ".ts.net", none of them empty) or an IPv4 address in 100.64.0.0/10.
+func isTailnetHost(host string) bool {
+	if ip := net.ParseIP(host); ip != nil {
+		ip4 := ip.To4()
+		return ip4 != nil && tailnetRange.Contains(ip4)
+	}
+	name, ok := strings.CutSuffix(strings.ToLower(host), ".ts.net")
+	return ok && !slices.Contains(strings.Split(name, "."), "")
+}
+
+// ValidateDashboardURL applies the transport policy shared by Device API and
 // image requests. Production traffic must use HTTPS; plain HTTP is limited to
-// a loopback mock running on the tablet itself.
-func ValidateRemoteURL(value string) error {
+// a loopback mock running on the tablet itself and, when proxied is true (a
+// loopback proxy is configured), to a tailnet host: the proxy carries the
+// request over the encrypted tailnet, so the hop the tablet makes by itself
+// never leaves the device.
+func ValidateDashboardURL(value string, proxied bool) error {
 	u, err := url.Parse(strings.TrimSpace(value))
 	if err != nil || !u.IsAbs() || u.Hostname() == "" {
 		return errors.New("URL is invalid")
@@ -272,10 +309,27 @@ func ValidateRemoteURL(value string) error {
 	if strings.EqualFold(u.Scheme, "https") {
 		return nil
 	}
-	ip := net.ParseIP(u.Hostname())
-	isLoopback := u.Scheme == "http" && (strings.EqualFold(u.Hostname(), "localhost") || ip != nil && ip.IsLoopback())
-	if !isLoopback {
-		return errors.New("HTTPS is required; HTTP is allowed only for a loopback mock on this device")
+	if u.Scheme == "http" && (isLoopbackHost(u.Hostname()) || proxied && isTailnetHost(u.Hostname())) {
+		return nil
+	}
+	if proxied {
+		return errors.New("HTTPS is required; HTTP is allowed only for a loopback mock on this device or a tailnet host")
+	}
+	return errors.New("HTTPS is required; HTTP is allowed only for a loopback mock on this device")
+}
+
+// validateProxyURL accepts http://<loopback host>:<port> and nothing else.
+func validateProxyURL(value string) error {
+	const rule = "must be http:// to a loopback host with a port, such as http://127.0.0.1:8080"
+	u, err := url.Parse(value)
+	if err != nil || u.Scheme != "http" || u.Hostname() == "" || u.User != nil {
+		return errors.New(rule)
+	}
+	if u.Path != "" && u.Path != "/" || u.RawQuery != "" || u.Fragment != "" || !isLoopbackHost(u.Hostname()) {
+		return errors.New(rule)
+	}
+	if port, err := strconv.Atoi(u.Port()); err != nil || port < 1 || port > 65535 {
+		return errors.New(rule)
 	}
 	return nil
 }

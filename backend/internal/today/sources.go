@@ -54,20 +54,21 @@ type Screen struct {
 // status line ("as of 08:30 · offline", "unavailable: …"), empty when the
 // data is fresh; Problem means the cell has nothing to draw but the note.
 type Cell struct {
-	Widget  string  `json:"widget"`
-	View    string  `json:"view"`
-	X       int     `json:"x"`
-	Y       int     `json:"y"`
-	W       int     `json:"w"`
-	H       int     `json:"h"`
-	Title   string  `json:"title"`
-	Tone    string  `json:"tone"`
-	Note    string  `json:"note,omitempty"`
-	Problem bool    `json:"problem,omitempty"`
-	Stat    *Stat   `json:"stat,omitempty"`
-	Groups  []Group `json:"groups,omitempty"`
-	Spark   *Spark  `json:"spark,omitempty"`
-	Alert   *Alert  `json:"alert,omitempty"`
+	Widget  string   `json:"widget"`
+	View    string   `json:"view"`
+	X       int      `json:"x"`
+	Y       int      `json:"y"`
+	W       int      `json:"w"`
+	H       int      `json:"h"`
+	Title   string   `json:"title"`
+	Tone    string   `json:"tone"`
+	Note    string   `json:"note,omitempty"`
+	Problem bool     `json:"problem,omitempty"`
+	Stat    *Stat    `json:"stat,omitempty"`
+	Groups  []Group  `json:"groups,omitempty"`
+	Spark   *Spark   `json:"spark,omitempty"`
+	Alert   *Alert   `json:"alert,omitempty"`
+	Metrics *Metrics `json:"metrics,omitempty"`
 }
 
 // Stat is a large number. Trend is "up" or "down" from Delta's sign.
@@ -92,6 +93,20 @@ type Spark struct {
 type Alert struct {
 	Text string `json:"text"`
 	Tone string `json:"tone"`
+}
+
+// Metrics is a few labelled rows, one to eight, in the order they came.
+type Metrics struct {
+	Rows []MetricRow `json:"rows"`
+}
+
+// MetricRow is a label at left and a value at right, with an optional detail
+// line under them. Tone is always one of the four the view knows.
+type MetricRow struct {
+	Label  string `json:"label"`
+	Value  string `json:"value"`
+	Detail string `json:"detail,omitempty"`
+	Tone   string `json:"tone"`
 }
 
 // Section is one source's part of message 109.

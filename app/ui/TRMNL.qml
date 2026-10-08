@@ -26,6 +26,11 @@ Rectangle {
     property bool settingsVisible: false
     property bool brightnessScheduleVisible: false
     property bool todayVisible: false   // remarkable-ai
+    // remarkable-ai: the tap regions a BYOS server sent with the image shown
+    // (message 102), and the screen they were made for.
+    property var taps: []
+    property string tapScreen: ""
+    readonly property bool tapsBlocked: root.controlsVisible || root.settingsVisible || root.todayVisible || root.brightnessScheduleVisible
     property bool apiKeyConfigured: false
     property bool initialized: false
     // The reMarkable 1 and 2 have no front light, so those controls are hidden
@@ -77,6 +82,7 @@ Rectangle {
             // resetting them every time this page is saved.
             history_limit: appConfig.history_limit || 30,
             dither_palette: appConfig.dither_palette,
+            proxy: appConfig.proxy,   // remarkable-ai: no on-device control; a save must not drop it
             quiet_hours_enabled: quietHours.checked,
             quiet_hours_start: quietStart.text,
             quiet_hours_end: quietEnd.text,
@@ -319,6 +325,11 @@ Rectangle {
             try { data = JSON.parse(contents || "{}") } catch (e) { root.statusText = "Invalid backend message"; return }
             if (type === 101) { root.applyState(data); if (!root.initialized) { root.configureFields(); root.initialized = true } }
             else if (type === 102) {
+                // remarkable-ai: the taps belong to the image in this message.
+                var imageIsNew = root.dashboardSource !== data.path
+                root.taps = Array.isArray(data.taps) ? data.taps : []
+                root.tapScreen = data.tap_screen || ""
+                if (imageIsNew) tapSheet.imageChanged()
                 root.dashboardSource = data.path
                 root.dashboardAvailable = true
                 panelRefreshDelay.restart()
@@ -336,6 +347,7 @@ Rectangle {
             else if (type === 108) { root.batteryTest = data; batteryChart.requestPaint() }
             else if (type === 109) { todayView.apply(data) }   // remarkable-ai
             else if (type === 110) { todayView.actionResult(data) }
+            else if (type === 111) { tapSheet.result(data) }
         }
     }
 
@@ -350,6 +362,7 @@ Rectangle {
                 root.settingsVisible = false
                 root.brightnessScheduleVisible = false
                 root.todayVisible = false   // remarkable-ai
+                tapSheet.close()            // remarkable-ai
                 diagnosticsPopup.close()
                 root.cleanScreen()
                 endpoint.sendMessage(10, "")
@@ -388,6 +401,23 @@ Rectangle {
             asynchronous: true
         }
 
+        // remarkable-ai: tap regions over the painted image, same box and fill
+        // mode as the Image. They are inside displayArea, so they rotate with it;
+        // the Menu and exit corners below are later children of root, hence above.
+        TapOverlay {
+            anchors.fill: dashboard
+            taps: root.taps
+            sourceWidth: dashboard.sourceSize.width
+            sourceHeight: dashboard.sourceSize.height
+            fillMode: dashboard.fillMode
+            imageReady: dashboard.status === Image.Ready
+            controlsVisible: root.controlsVisible
+            settingsVisible: root.settingsVisible
+            todayVisible: root.todayVisible
+            brightnessScheduleVisible: root.brightnessScheduleVisible
+            onTapped: function(tap) { tapSheet.show(tap, root.tapScreen) }
+        }
+
         // remarkable-ai: the calendar also draws a 2px grey rule down its own
         // left edge, right against the hour labels. With the white margin it
         // is the only visible edge left, so paint it out.
@@ -399,7 +429,18 @@ Rectangle {
             width: Math.ceil(2 * dashboard.paintedWidth / Math.max(1, dashboard.sourceSize.width))
             height: dashboard.paintedHeight
         }
+
+        // remarkable-ai: what a tap region offers. Closed whenever a panel opens
+        // over the dashboard; its answer comes in message 111.
+        TapSheet {
+            id: tapSheet
+            anchors.fill: parent
+            onActionRequested: function(widget, key, action, screen, title) {
+                endpoint.sendMessage(20, JSON.stringify({widget: widget, key: key, action: action, screen: screen, title: title}))
+            }
+        }
     }
+    onTapsBlockedChanged: { if (root.tapsBlocked) tapSheet.close() }   // remarkable-ai
 
     Rectangle {
         visible: !root.dashboardAvailable

@@ -104,6 +104,8 @@ Rectangle {
         return tone === "good" ? "✓ " : tone === "warn" ? "! " : tone === "bad" ? "!! " : ""
     }
     function heavy(tone) { return tone === "warn" || tone === "bad" }
+    // A metrics row marks only the tones that need a look (warn and bad).
+    function attention(tone) { return view.heavy(tone) ? view.marker(tone) : "" }
     function itemCount(groups) {
         var n = 0
         var list = groups || []
@@ -116,6 +118,7 @@ Rectangle {
         if (c.view === "stat") return !c.stat
         if (c.view === "list") return view.itemCount(c.groups) === 0
         if (c.view === "spark") return !c.spark
+        if (c.view === "metrics") return !c.metrics || (c.metrics.rows || []).length === 0
         return true
     }
     function nothingPlaced() {
@@ -442,6 +445,66 @@ Rectangle {
                                                 onClicked: view.openSheet(row.modelData, cellFrame.cell.title || "")
                                             }
                                         }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // metrics: labelled rows, in the order sent. The label is at the left, the
+                    // value at the right in bold, the detail small under them; warn and bad rows
+                    // carry a marker and a bold label. More rows than fit scroll.
+                    Flickable {
+                        id: metricsScroll
+                        anchors.fill: parent
+                        visible: cellFrame.cell.view === "metrics" && !view.empty(cellFrame.cell)
+                        contentHeight: metricsBody.implicitHeight
+                        boundsBehavior: Flickable.StopAtBounds
+                        clip: true
+                        Column {
+                            id: metricsBody
+                            width: metricsScroll.width
+                            spacing: 10
+                            Repeater {
+                                model: cellFrame.cell.view === "metrics" && cellFrame.cell.metrics ? (cellFrame.cell.metrics.rows || []) : []
+                                delegate: Item {
+                                    id: metric
+                                    required property var modelData
+                                    width: metricsBody.width
+                                    height: metricLine.height + (metricDetail.visible ? metricDetail.implicitHeight + 2 : 0)
+                                    Item {
+                                        id: metricLine
+                                        width: metric.width
+                                        height: Math.max(metricLabel.implicitHeight, metricValue.implicitHeight)
+                                        Text {
+                                            id: metricLabel
+                                            objectName: "metricLabel"
+                                            textFormat: Text.PlainText
+                                            anchors.left: parent.left; anchors.right: metricValue.left; anchors.rightMargin: 12
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            elide: Text.ElideRight; color: "#333"
+                                            font.pixelSize: 26; font.bold: view.heavy(metric.modelData.tone)
+                                            text: view.attention(metric.modelData.tone) + (metric.modelData.label || "")
+                                        }
+                                        Text {
+                                            id: metricValue
+                                            objectName: "metricValue"
+                                            textFormat: Text.PlainText
+                                            anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                                            width: Math.min(implicitWidth, metric.width * 0.6)
+                                            elide: Text.ElideRight; horizontalAlignment: Text.AlignRight
+                                            font.pixelSize: 30; font.bold: true; color: "#111"
+                                            text: metric.modelData.value || ""
+                                        }
+                                    }
+                                    Text {
+                                        id: metricDetail
+                                        objectName: "metricDetail"
+                                        textFormat: Text.PlainText
+                                        anchors.top: metricLine.bottom; anchors.topMargin: 2
+                                        width: metric.width; elide: Text.ElideRight; visible: text !== ""
+                                        font.pixelSize: 20; color: "#555"
+                                        text: metric.modelData.detail || ""
                                     }
                                 }
                             }
