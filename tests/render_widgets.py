@@ -6,7 +6,6 @@ python tests/render_widgets.py --output /path/to/stills [--source-root CHECKOUT]
 Source-root lets the same fixtures capture a baseline and a changed checkout.
 """
 import argparse
-import copy
 import json
 import os
 from pathlib import Path
@@ -88,7 +87,7 @@ def main():
         captures.append(dict(name=name, width=image.width(), height=image.height()))
 
     wrapper = dest / "TodayHarness.qml"
-    wrapper.write_text('import QtQuick\nimport "' + (root / "app/ui").as_posix() + '"\n'
+    wrapper.write_text('import QtQuick\nimport "' + QUrl.fromLocalFile(str(root / "app/ui")).toString() + '"\n'
         'TodayView {\n'
         ' property string stateJson: "{}"\n'
         ' onStateJsonChanged: apply(JSON.parse(stateJson))\n'
@@ -111,6 +110,10 @@ def main():
             if mode == "today":
                 data = fixture()
                 item.setProperty("stateJson", json.dumps(data))
+                QTest.qWait(100)
+                for child in walk(item):
+                    if child.property("contentY") is not None:
+                        child.setProperty("contentY", 0)
                 save(view, prefix + "-compact")
                 geometry = []
                 for child in walk(item):
